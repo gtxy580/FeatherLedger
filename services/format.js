@@ -165,3 +165,75 @@ export function hhmmNow() {
   const d = new Date()
   return timeFromIndexes([d.getHours(), d.getMinutes()])
 }
+
+const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
+
+/**
+ * 按天分组头的文案：'2026-10-01' → '10月01日 周四'。
+ *
+ * 从 pages/index/index.vue 搬来 —— 「分类明细」页要用同一套分组头。搬家的意义就在这里：
+ * 留在页面里就只能靠真机看，而「月不补零、日补零」这种细节各写一遍就会慢慢走散。
+ */
+export function dayLabel(dateStr) {
+  const [y, m, d] = String(dateStr).split('-').map(Number)
+  const wd = WEEKDAYS[new Date(y, m - 1, d).getDay()]
+  return `${m}月${String(d).padStart(2, '0')}日 周${wd}`
+}
+
+/** 按月分组头的文案：'2026-09' → '2026年9月'（月不补零，与 dayLabel 同规）。年报视图与分类明细的年粒度分组用它 */
+export function monthLabel(monthStr) {
+  const [y, m] = String(monthStr).split('-').map(Number)
+  return `${y}年${m}月`
+}
+
+/**
+ * 分类标题：有父分类就带上，`餐饮-早餐`。
+ *
+ * 分类明细页的页头用它 —— 只写「早餐」用户看不出它属于哪一支，也没法跟占比条上那根
+ * 「餐饮-早餐」的条对上。与占比条「子分类视角」的标签同规。
+ *
+ * @param {string} name 分类自己的名字
+ * @param {string} parentName 父分类名（自己是主分类、或父已被删时为空）
+ * @param {boolean} [direct] 这一行是不是「没选子分类、直接记在主分类上」的那一笔。
+ *   只在**子分类视角**下才该为 true —— 那时占比条上会并列出现「餐饮-直接记账」，
+ *   页头得跟着写同一个标签才认得出来。父分类反倒不加这个后缀（它没有歧义）。
+ *   函数自己把关：即使传了 true，只要有父名就仍按「父-自己」拼，不会拼出「早餐-直接记账」。
+ * @returns {string} 父名缺失或自己没有名字时，退回写得出的一半，绝不拼出「餐饮-」这种半截
+ */
+export function catLabel(name, parentName, direct) {
+  const n = String(name || '')
+  const p = String(parentName || '')
+  if (n && !p && direct) return `${n}-直接记账`
+  if (p && n) return `${p}-${n}`
+  return n || p
+}
+
+/**
+ * 期间文案：由「粒度 + 起止日」现算 —— '2026年10月' / '2026年' / '2026.9.28-10.4'。
+ *
+ * 与 stats-panel 的 `labelOf(gran, anchor)` 产出的**是同一个字符串**（那处现在也走这里，
+ * 所以只有这一个来源）。之所以要能「现算」：分类明细页原先靠 URL 把这段中文传给目标页，
+ * 而 **uni-app 在 App 端不会自动解码 query**（本仓此前所有 navigateTo 都只传数字 id，
+ * 没有先例可参照）—— 页头于是显示成 %E5%B9%B4… 这类。改成从 ASCII 参数现算之后，
+ * 这一类问题整体消失，不必再猜框架在每一端到底解不解码。
+ *
+ * 周报那一档跟日历一致：**同年省略尾部年份**（`2026.9.28-10.4`），跨年才补
+ * （`2025.12.29-2026.1.4`）；月日**都不补零** —— 一行里放得下才是目的（用户裁定）。
+ *
+ * @param {'week'|'month'|'year'} gran 粒度
+ * @param {string} start 'YYYY-MM-DD'
+ * @param {string} [end] 'YYYY-MM-DD'（周报要用；月/年只从 start 推）
+ * @returns {string} 参数不齐全时返回空串（宁可少显示一行，也不抛给页面）
+ */
+export function periodText(gran, start, end) {
+  const s = String(start || '').split('-').map(Number)
+  if (s.length !== 3 || s.some((n) => !Number.isFinite(n))) return ''
+  const [y, m, d] = s
+  if (gran === 'year') return `${y}年`
+  if (gran === 'month') return `${y}年${m}月`
+  if (gran !== 'week') return ''
+  const e = String(end || '').split('-').map(Number)
+  if (e.length !== 3 || e.some((n) => !Number.isFinite(n))) return ''
+  const head = `${y}.${m}.${d}`
+  return e[0] === y ? `${head}-${e[1]}.${e[2]}` : `${head}-${e[0]}.${e[1]}.${e[2]}`
+}

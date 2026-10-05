@@ -79,7 +79,10 @@
         </view>
 
         <view v-else class="sp-bars">
-          <view v-for="r in catRows" :key="r.key" class="sp-row">
+          <!-- 整行可点：下钻到这一分类的明细（用户裁定）。按压反馈与「我的」页那排入口同一套，
+               免得同一个「能点的东西」在两处是两种手感 -->
+          <view v-for="r in catRows" :key="r.key" class="sp-row af-press" :class="{ pressing: isPressed(r.key) }"
+            @touchstart="pressOn(r.key)" @touchend="pressOff" @touchcancel="pressOff" @click="pickCategory(r)">
             <category-icon :icon="r.icon" :color="r.color" :name="r.iconName" :size="48" />
             <view class="sp-row-mid">
               <text class="sp-row-name">{{ r.name }}</text>
@@ -175,7 +178,7 @@
 <script>
 import { getCategoryStats, getTrendStats } from '@/services/record.js'
 import { foldToTop, flatSubRows, summarizePeriod } from '@/services/stats.js'
-import { fmtYuan, fmtPercent, fmtYuanShort } from '@/services/format.js'
+import { fmtYuan, fmtPercent, fmtYuanShort, periodText } from '@/services/format.js'
 import { maskStyle } from '@/services/icons.js'
 import pressFx from '@/services/press.js'
 
@@ -221,20 +224,9 @@ function isoWeekYearOf(d) {
   return isoThursday(d).getFullYear()
 }
 
-/**
- * 一周的紧凑区间：`2026.9.28-10.4`（同年省略尾部年份）、跨年 `2025.12.29-2026.1.4`。
- * 月日不补零——一行里放得下才是目的（用户裁定）。
- * 抬头的周标签与滚轮里的周选项共用它，两处格式必须一致。
- */
-function weekRangeOf(monday) {
-  const sun = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6)
-  const head = `${monday.getFullYear()}.${monday.getMonth() + 1}.${monday.getDate()}`
-  const tail =
-    monday.getFullYear() === sun.getFullYear()
-      ? `${sun.getMonth() + 1}.${sun.getDate()}`
-      : `${sun.getFullYear()}.${sun.getMonth() + 1}.${sun.getDate()}`
-  return `${head}-${tail}`
-}
+// 一周的紧凑区间（`2026.9.28-10.4`）原先在本文件里算，现已抽到 format.js 的 `periodText` ——
+// 「分类明细」页也要那段文案，而页面拿不到组件的内部函数。抬头标签与滚轮里的周选项现在都走它，
+// 仍然是同一份来源（断言钉在 scripts/format-repro.mjs 的 periodText 那一组）。
 
 /**
  * ISO 周 → 该周周一的 Date。反查的锚点是「1 月 4 日必落在第 1 周」——
@@ -378,13 +370,21 @@ export default {
       // （例如分组对象只有 total、没有 amount），直接展开会取到 undefined
       // iconName 是图标文字回退用的名字（category-icon 取首字）：子分类视角必须是**本行自己的**
       // 名称，不能用带父前缀的 label，否则「早餐」会显示成主分类首字「餐」
-      const row = (key, name, icon, color, amount, iconName = name) => ({
+      //
+      // cid / includeSub 是「点这一行跳去分类明细」要带的下钻参数，两者的取值**恰好**
+      // 与占比图对得上（见 cat-stats-repro 第 5 组的三条交叉断言）：
+      //   cid=null → 已删除分类（孤儿行）；includeSub=true → 主分类视角 = 它自己 + 全部子分类
+      // 主分类视角下 cid 可能是「父已被删、自己还在」的子分类的**父 id**（foldToTop 的组键），
+      // 而 subtreeIds 会按 parent_id 反查出那个孩子，所以这种行照样点得进去。
+      const row = (key, name, icon, color, amount, iconName = name, cid = null, includeSub = false) => ({
         key,
         name,
         icon,
         color,
         amount,
         iconName,
+        cid,
+        includeSub,
         pct: Math.round(pctOf(amount) * 100) / 100, // 条宽用精确值（两位足够）
         pctText: fmtPercent(pctOf(amount)), // 文案恒两位小数（用户裁定）
         barColor: color || 'var(--md-outline)'
@@ -393,7 +393,7 @@ export default {
       if (this.level === 'top') {
         // 已删除分类画叉（与首页列表同规）：它没名没图标，退回首字会显示成「已」
         return foldToTop(this.cats).map((t) =>
-          row('t' + t.id, t.name, t.id == null ? 'svg:x' : t.icon, t.color, t.amount)
+          row('t' + t.id, t.name, t.id == null ? 'svg:x' : t.icon, t.color, t.amount, t.name, t.id, true)
         )
       }
 
@@ -405,7 +405,9 @@ export default {
           r.cid == null ? 'svg:x' : r.icon,
           r.color,
           r.amount,
-          r.name
+          r.name,
+          r.cid,
+          false
         )
       )
     },
@@ -525,6 +527,28 @@ export default {
       if (this.level === l) return
       this.level = l
     },
+    /**
+     * 点分类行 → 下钻到「分类明细」。
+     *
+     * 组件**只发事件、不认识路由**：跳去哪由宿主（「我的」页）决定。这样本面板一直是
+     * 纯展示件，将来放到别处也不必改它。
+     *
+     * 期间与收支从**自己当前的状态**里取（range / type），而不是让页面再猜一遍 ——
+     * 页面若自己从 gran+anchor 重算，就等于把这一页的口径复制了第二份，迟早走散。
+     */
+    pickCategory(r) {
+      // 载荷刻意只给**定位与期间**这几样：分类名与期间文案都由目标页现算
+      // （名字从查回来的流水里取、文案由 format.js 的 periodText 算），
+      // 免得绕一圈走 URL —— uni-app 在 App 端不会解码 query 里的中文。
+      this.$emit('pick', {
+        cid: r.cid,
+        includeSub: r.includeSub,
+        type: this.type,
+        gran: this.gran,
+        start: this.range.start,
+        end: this.range.end
+      })
+    },
     /** 前后翻页：锚点 ±1 个单位（周 ±7 天、月 ±1 月、年 ±1 年），Date 自动进位 */
     shift(delta) {
       if (delta > 0 && !this.canForward) return // 已是最新一期：静默返回（按钮另有置灰）
@@ -561,14 +585,8 @@ export default {
     labelOf(gran, anchor, withWeekNo) {
       const { start, end } = this.rangeOf(gran, anchor)
       if (!start) return ''
-      const s = parseDate(start)
-      const e = parseDate(end)
-      if (gran === 'week') {
-        const range = weekRangeOf(s)
-        return withWeekNo ? `${range}（第${isoWeekOf(s)}周）` : range
-      }
-      if (gran === 'month') return `${s.getFullYear()}年${s.getMonth() + 1}月`
-      return `${s.getFullYear()}年`
+      const text = periodText(gran, start, end)
+      return withWeekNo && gran === 'week' ? `${text}（第${isoWeekOf(parseDate(start))}周）` : text
     },
     // ---- 快速切换期间（点击期间标签弹出滚轮）----
     /**
@@ -609,7 +627,9 @@ export default {
         const maxW = y === isoWeekYearOf(now) ? isoWeekOf(now) : weeksInIsoYear(y)
         for (let w = 1; w <= maxW; w++) {
           // 只写「第 N 周」看不出是哪几天（用户反馈）：把该周的日期段一并带上
-          this.pvUnits.push({ v: w, label: `第${w}周 ${weekRangeOf(isoMondayOf(y, w))}` })
+          const mon = isoMondayOf(y, w)
+          const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6)
+          this.pvUnits.push({ v: w, label: `第${w}周 ${periodText('week', fmtDate(mon), fmtDate(sun))}` })
         }
       }
     },

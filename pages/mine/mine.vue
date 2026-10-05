@@ -36,9 +36,10 @@
       </view>
     </view>
 
-    <!-- 收支图表：直接在本页展示（用户裁定：不放入口），内容全部交给 stats-panel -->
+    <!-- 收支图表：直接在本页展示（用户裁定：不放入口），内容全部交给 stats-panel。
+         @pick = 点分类占比里的某一行 → 下钻到该分类的明细；跳去哪由本页决定，面板不认识路由 -->
     <view class="card card-chart">
-      <stats-panel ref="stats" />
+      <stats-panel ref="stats" @pick="openCategoryDetail" />
     </view>
 
     <!-- 自绘 tabBar（Task 4.5） -->
@@ -95,6 +96,31 @@ export default {
     },
     go(url) {
       uni.navigateTo({ url })
+    },
+    /**
+     * 分类占比的某一行 → 该分类的明细页。
+     *
+     * 面板只发一个结构化事件，URL 长什么样是**这一页**的事 —— 组件因此不必认识路由。
+     *
+     * 参数全走 query：目标页是 navigateTo 压栈进去的，被系统回收后再恢复时按参数重建即可，
+     * 不需要额外的全局状态。
+     *
+     * ★ 参数**全是 ASCII**，分类名与期间文案都不传。上一版用 encodeURIComponent 把中文
+     *   塞进 URL，而 **uni-app 在 App 端不会自动解码 query** —— 目标页页头于是显示成
+     *   `%E5%B9%B4…` 一串。那两样本来就能现算：期间文案由 format.js 的 periodText 从
+     *   gran/start/end 算出，分类名由目标页从查回来的流水里取 categoryName（还顺带保证
+     *   名字永远与库里的当前值一致）。**不往 URL 里放中文，就不必再猜每一端解不解码。**
+     */
+    openCategoryDetail(e) {
+      const q = [
+        'cid=' + (e.cid == null ? '' : e.cid),
+        'sub=' + (e.includeSub ? '1' : '0'),
+        'type=' + e.type,
+        'gran=' + e.gran,
+        'start=' + e.start,
+        'end=' + e.end
+      ].join('&')
+      uni.navigateTo({ url: '/pages/record/detail?' + q })
     }
   }
 }

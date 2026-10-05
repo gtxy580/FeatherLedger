@@ -88,6 +88,8 @@ function toRec(r) {
     categoryName: r.category_name || '',
     categoryIcon: r.category_icon || '',
     categoryColor: r.category_color || r.parent_color || '',
+    // 父分类名：分类明细页的页头标题要拼「餐饮-早餐」；分类自己是主分类（或被删）时为空串
+    parentName: r.parent_name || '',
     fromName: r.from_name || '',
     fromIcon: r.from_icon || '',
     fromColor: r.from_color || '',
@@ -145,7 +147,9 @@ export function decorateRecord(r, opts = {}) {
   // 没命中）直接不拼，免得留下半个「 · 」。时刻为空的老流水同理，不留下半个「 | 」。
   const meta = []
   if (opts.showAccount && r.fromName) meta.push(r.fromName)
-  if (r.note) meta.push(cat)
+  // showCategory:false —— 「分类明细」页整页都是同一个分类，每行副标题再重复它是纯噪音。
+  // 与 showAccount 是同一条判据：这一维已经被页面固定住了，就不必在每一行里再报一次。
+  if (r.note && opts.showCategory !== false) meta.push(cat)
   const pair = meta.join(' · ')
   return {
     ...base,
@@ -165,7 +169,7 @@ export function decorateRecord(r, opts = {}) {
 const REC_SELECT = `SELECT r.id, r.type, r.amount, r.note, r.date, r.time,
       r.account_id AS accountId, r.to_account_id AS toAccountId, r.transfer_id AS transferId,
       c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
-      p.color AS parent_color,
+      p.name AS parent_name, p.color AS parent_color,
       fa.name AS from_name, fa.icon AS from_icon, fa.color AS from_color,
       ta.name AS to_name,   ta.icon AS to_icon,   ta.color AS to_color
     FROM records r
@@ -501,6 +505,116 @@ export async function getCategoryStats({ type, start, end }) {
     amount: Number(r.amount || 0),
     count: Number(r.count || 0)
   }))
+}
+
+/**
+ * 某个分类（或它的整个子树）在某一期里的流水，按天/按月分组。
+ *
+ * **它必须与分类占比对得上**：用户点的是那根写着 600 的条，页头就得是 600。
+ * 三个分支各自对应占比图上的一种行（见 cat-stats-repro 第 5 组）：
+ *   includeSub=true    → 主分类视角的行：它自己 + 全部子分类（占比图就是这么上卷的）
+ *   includeSub=false   → 子分类视角的行：只有这一个分类
+ *   cid=null           → 「已删除分类」那一行：所有孤儿流水的合集
+ *
+ * ★ **所有谓词只引用 records 自己的列。** 「含子分类」「孤儿」都先在 JS 里算出 id 集合，
+ *   再写成 `r.category_id IN (...)`。直觉写法 `c.parent_id = ?`（LEFT JOIN 出来的父列）
+ *   在真机 SQLite 上是对的，但本仓的 mock 把各表列拍平成一层，而 categories **既当 c 又当
+ *   p**（父分类），同名列互相覆盖 —— c.parent_id 会被 p.parent_id（主分类的父 = null）盖掉，
+ *   于是「含子分类」静默退化成「只有自己」：脚本全绿，只有真机上看得出少了一半。
+ *   谓词里只碰 r.* 就没有这层隐患。
+ *
+ * @param {Object} p
+ * @param {1|2} p.type 1=支出 2=收入
+ * @param {string} p.start 起（含）'YYYY-MM-DD'
+ * @param {string} p.end 止（含）'YYYY-MM-DD'
+ * @param {number|null} [p.cid] 分类 id；null = 已删除分类（孤儿行）
+ * @param {boolean} [p.includeSub] 是否连子分类一起（主分类视角才为 true）
+ * @param {'day'|'month'} [p.groupBy] 分组粒度：周/月报按天，年报按月
+ * @param {number|null} [p.accountId] 本页自己的账户筛选；null = 全部账户
+ * @returns {Promise<{groups: Array<{key, amount, count, records}>, total: number, count: number}>}
+ *   金额均为分；groups 按时间倒序（SQL 已排好，Map 保持插入顺序）
+ */
+export async function getCategoryRecords({
+  type, start, end, cid = null, includeSub = false, groupBy = 'day', accountId = null
+}) {
+  if (type !== 1 && type !== 2) throw new Error('type 必须是 1(支出) 或 2(收入)')
+  const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v)
+  if (!isDate(start) || !isDate(end)) throw new Error('start/end 必须是 YYYY-MM-DD 格式')
+  if (cid !== null && !Number.isInteger(cid)) throw new Error('cid 必须是整数或 null')
+  if (groupBy !== 'day' && groupBy !== 'month') throw new Error('groupBy 必须是 day 或 month')
+
+  let where
+  if (cid === null) {
+    const ids = await orphanCategoryIds(type, start, end, accountId)
+    // 空集合的 `IN ()` 是非法 SQL，所以先判空再拼
+    if (!ids.length) return { groups: [], total: 0, count: 0 }
+    where = `r.category_id IN (${ids.join(',')})`
+  } else if (includeSub) {
+    const ids = await subtreeIds(cid)
+    where = `r.category_id IN (${ids.join(',')})`
+  } else {
+    where = `r.category_id = ${cid}`
+  }
+
+  return groupRecords({ type, start, end, groupBy, accountId, where })
+}
+
+/**
+ * 该主分类自己 + 它的全部子分类 id。层级只有两层（见 stats.js 的 topKeyOf 与首页注释），
+ * 所以一条 `WHERE parent_id = ?` 就够了，不必递归。
+ */
+async function subtreeIds(cid) {
+  const rows = await query(`SELECT id FROM categories WHERE parent_id = ${cid}`)
+  return [cid].concat(rows.map((x) => Number(x.id)))
+}
+
+/**
+ * 期间内出现过、但分类表里已经查不到的 category_id（= 已删除分类）。
+ *
+ * 为什么不写成一个 SQL 谓词：`... AND c.id IS NULL`（分类被删时 LEFT JOIN 落空）在**真机
+ * SQLite 上完全正确**，但本仓的 mock 把各表列拍平成一层，而 records / accounts 也都有 id
+ * 列 —— c 落空时那个位置是**键缺失**而不是「值为 null」，于是拍平后会取到 records.id，
+ * 判据恒为假：脚本给出「孤儿 = 空集」，门是绿的、只有真机上有数据。这正是 mock 最该避免
+ * 的「静默给错答案」。拆成两步之后每个查询只引用单张表的列，脚本与真机保证同一个答案。
+ */
+async function orphanCategoryIds(type, start, end, accountId) {
+  const rows = await query(
+    `SELECT r.category_id AS cid FROM records r
+    WHERE r.type = ${type} AND r.date >= ${esc(start)} AND r.date <= ${esc(end)}${accountWhere(accountId, 'r.')}
+      AND r.category_id IS NOT NULL
+    GROUP BY r.category_id`
+  )
+  const alive = new Set((await query('SELECT id FROM categories')).map((x) => Number(x.id)))
+  return rows.map((x) => Number(x.cid)).filter((id) => !alive.has(id))
+}
+
+/** getCategoryRecords 的查询与分组（两个入口共用：按分类 / 按孤儿 id 集合） */
+async function groupRecords({ type, start, end, groupBy, accountId, where }) {
+  const rows = await query(
+    `${REC_SELECT}
+    WHERE r.type = ${type} AND r.date >= ${esc(start)} AND r.date <= ${esc(end)} AND ${where}${accountWhere(accountId, 'r.')}
+    ORDER BY r.date DESC, r.time DESC, r.created_at DESC, r.id DESC`
+  )
+
+  const groups = []
+  const byKey = new Map()
+  let total = 0
+  for (const raw of rows) {
+    const rec = toRec(raw)
+    const key = groupBy === 'month' ? rec.date.slice(0, 7) : rec.date
+    let g = byKey.get(key)
+    if (!g) {
+      g = { key, amount: 0, count: 0, records: [] }
+      byKey.set(key, g)
+      groups.push(g)
+    }
+    g.amount += rec.amount
+    g.count += 1
+    g.records.push(rec)
+    total += rec.amount
+  }
+
+  return { groups, total, count: rows.length }
 }
 
 const GRANS = ['week', 'month', 'year']

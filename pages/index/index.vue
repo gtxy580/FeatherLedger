@@ -3,12 +3,15 @@
 	     而左滑已取消）。只监听 start/end、不碰 touchmove，故不影响列表滚动。见 services/tab-swipe.js -->
 	<view class="page" :class="slideClass" :style="themeVars" @touchstart="onSwipeStart"
 		@touchend="onSwipeEnd" @touchcancel="onSwipeEnd" @click="onPageClick">
-		<!-- 错误态：数据库不可用时的明确出口（Spec §9，M3 既有能力） -->
-		<view v-if="loadError" class="error-box">
-			<text class="error-icon">⚠️</text>
-			<text class="error-text">数据加载失败</text>
-			<view class="retry-btn af-press" :class="{ pressing: isPressed('retry') }" @touchstart="pressOn('retry')"
-				@touchend="pressOff" @touchcancel="pressOff" @click="load"><text class="retry-text">重 试</text></view>
+		<!-- 错误态：数据库不可用时的明确出口（Spec §9，M3 既有能力）。
+		     形状与「分类明细」页的错误态一致（.empty + .retry）——原先用的 .error-box 只定义在
+		     account.vue 里，而 **App 端页面样式是隔离的**，那个类名在这一页根本拿不到：
+		     数据库真出问题时，这里会是一个没有样式的裸按钮。跨页那一版由 check-pages 第七道拦住。 -->
+		<view v-if="loadError" class="empty">
+			<text class="empty-icon">⚠️</text>
+			<text class="empty-text">数据加载失败</text>
+			<view class="retry af-press" :class="{ pressing: isPressed('retry') }" @touchstart="pressOn('retry')"
+				@touchend="pressOff" @touchcancel="pressOff" @click="load"><text>重 试</text></view>
 		</view>
 
 		<template v-else>
@@ -246,12 +249,13 @@
 	} from '@/services/icons.js'
 	import {
 		fmtYuan,
-		fmtPercent
+		fmtPercent,
+		dayLabel,
+		monthLabel
 	} from '@/services/format.js'
 	import tabSwipe from '@/services/tab-swipe.js'
 	import pressFx from '@/services/press.js'
 
-	const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 	// 管理模式：按住一行不动多久算长按；位移超过多少就认定「在滑列表」而取消长按。
 	// 取值与分类管理页同一组（同一个手势在两个页面应当是同一个手感）。
 	const LONG_PRESS_MS = 450
@@ -418,6 +422,11 @@
 		methods: {
 			maskStyle, // 模板里直接用
 			fmtYuan, // 由 services/format.js 提供（金额格式化只保留一份）
+			// ★ 搬到 format.js 之后**仍要在这里挂一次**：模板与 load() 里写的都是 this.dayLabel，
+			//   而 import 进来的名字只活在模块作用域里，不会自动变成实例上的方法。
+			//   只改 import、删掉 methods 里这两行的那一版，真机首页直接白屏（this.dayLabel is not a function）。
+			dayLabel,
+			monthLabel,
 			async loadAccounts() {
 				const token = ++this.acctToken
 				try {
@@ -722,17 +731,8 @@
 					}
 				})
 			},
-			// '2026-10-01' → '10月01日 周三'
-			dayLabel(dateStr) {
-				const [y, m, d] = dateStr.split('-').map(Number)
-				const wd = WEEKDAYS[new Date(y, m - 1, d).getDay()]
-				return `${m}月${String(d).padStart(2, '0')}日 周${wd}`
-			},
-			// '2026-09' → '2026年9月'
-			monthLabel(monthStr) {
-				const [y, m] = monthStr.split('-').map(Number)
-				return `${y}年${m}月`
-			},
+			// dayLabel / monthLabel 已搬到 services/format.js —— 「分类明细」页要用同一套分组头文案。
+			// 留在页面里各写一份，那个「月不补零、日补零」的形状迟早会走散。
 		}
 	}
 </script>
@@ -1160,6 +1160,20 @@
 			margin-top: 24rpx;
 			font-size: 26rpx;
 			color: var(--md-on-surface-variant);
+		}
+
+		// 错误态的重试键（与 pages/record/detail.vue 的同名规则保持一致）
+		.retry {
+			margin-top: 40rpx;
+			padding: 16rpx 64rpx;
+			border-radius: 999rpx;
+			background: var(--md-primary);
+
+			text {
+				font-size: 27rpx;
+				font-weight: 600;
+				color: #ffffff;
+			}
 		}
 	}
 
