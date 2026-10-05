@@ -5,3 +5,9 @@ unpackage/
 
 # 可视化头脑风暴工具的会话产物（本机临时，不进仓库）
 .superpowers/
+
+# 签名证书：一旦泄露等于别人能冒名发布你的 App，绝不进仓库
+*.keystore
+*.jks
+*.p12
+*.pem
