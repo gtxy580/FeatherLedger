@@ -1,0 +1,7 @@
+unpackage/
+.DS_Store
+.hbuilderx/
+.idea/
+
+# 可视化头脑风暴工具的会话产物（本机临时，不进仓库）
+.superpowers/
