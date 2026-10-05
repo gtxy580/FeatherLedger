@@ -6,6 +6,14 @@
 仓库里没有任何第三方运行时库，界面与逻辑全部是仓库内的代码。数据库走 App 端原生的
 `plus.sqlite`（SQLite），因此只支持 **App 端（Android / iOS）**，不支持 H5 与小程序。
 
+## 界面
+
+| | | |
+| --- | --- | --- |
+| **首页 · 明细**<br><img src="screenshots/home.jpg" width="210"> | **记一笔 · 金额加减**<br><img src="screenshots/record.jpg" width="210"> | **转账（含手续费）**<br><img src="screenshots/transfer.jpg" width="210"> |
+| **分类 · 图标与色板**<br><img src="screenshots/category.jpg" width="210"> | **统计 · 占比与趋势**<br><img src="screenshots/stats.jpg" width="210"> | **主题 · 10 套预设**<br><img src="screenshots/theme.jpg" width="210"> |
+| **数据 · 导出 / 导入 / 撤销**<br><img src="screenshots/data.jpg" width="210"> | | |
+
 ## 功能
 
 | 模块 | 说明 |
@@ -36,6 +44,7 @@ services/       逻辑层：account 账户、record 流水、category 分类、s
                 backup 备份、theme + palette 主题色板、icons 图标注册表、
                 db 数据库、format 格式化、meta 杂项键值、press 按压反馈、tab-swipe 滑动
 static/         静态资源
+screenshots/    README 用的界面截图
 App.vue         全局样式（设计令牌、卡片、弹层三件套）
 main.js         入口 + 全局 mixin（主题变量、输入框的 cursor-spacing）
 pages.json      路由与 tabBar
