@@ -125,12 +125,23 @@
 					     不保证它**下面**的内容可见），给光标留出 400rpx 才让这一行与日期/时刻那行
 					     都露在键盘上方。子分类那个输入框一直有，这个漏了 —— 真机反馈「挡住下方」 -->
 					<input class="note-input" v-model="note" placeholder="备注（选填）" maxlength="50"
-						placeholder-class="note-ph" :cursor-spacing="kbSpacing" />
+						placeholder-class="note-ph" :cursor-spacing="kbSpacing" @focus="ensureNoteStats" />
 					<view v-if="note" class="clr-btn" @click="note = ''">
 						<view :style="maskStyle('x', 26, 'var(--md-on-surface-variant)')"></view>
 					</view>
 				</view>
 			</view>
+		</view>
+
+		<!-- 常用备注候选：**就地贴在备注那行下面**，不做浮层。浮在屏幕底部会被键盘盖住
+		     （App 端键盘是 adjustPan，只保证光标可见），而这里落在 cursor-spacing 留出的
+		     那 400rpx 保护带里，看得见也点得到。点一条就填进去，候选条随即自己收起
+		     —— 输入恰好等于某条时它不再提示自己（见 services/note.js）。
+		     ★ 必须落在 .meta-row **外面**：那一行是 display:flex，塞进去就成了同一行的第二个格子 -->
+		<view v-if="noteSugs.length" class="sug-row">
+			<view v-for="s in noteSugs" :key="s" class="sug af-press"
+				:class="{ pressing: isPressed('sug:' + s) }" @touchstart="pressOn('sug:' + s)"
+				@touchend="pressOff" @touchcancel="pressOff" @click="note = s">{{ s }}</view>
 		</view>
 
 		<!-- 「日期」「时刻」拆成两个胶囊（用户裁定）：各点各的，把对应那一组滚轮调进下面那张卡片。
@@ -313,8 +324,12 @@
 		getRecord,
 		saveTransfer,
 		updateRecord,
+		getNoteStats,
 		MAX_AMOUNT_CENTS
 	} from '@/services/record.js'
+	// 备注候选的排序规则在服务层（纯函数，断言在 scripts/note-repro.mjs）——
+	// 页内只喂数据、不管怎么排
+	import { buildSuggestions } from '@/services/note.js'
 	import {
 		listAccounts
 	} from '@/services/account.js'
@@ -378,6 +393,11 @@
 				calcTerms: [],
 
 				note: '',
+				// 备注候选的底料（每个备注用过几次、最近哪次、在哪些分类下用过）。
+				// null = 还没查过；[] = 查过但没有（或查失败）—— 两者要分开：
+				// 前者该去查，后者不该反复重试。详见 ensureNoteStats
+				noteStats: null,
+				noteLoading: false, // 防重入（非响应式用途，放 data 仅为声明）
 				date: '', // 'YYYY-MM-DD'
 				time: '', // 'HH:MM'（24 小时制）；空串 = 没有时刻（老流水）
 				pvMode: 'date', // 卡片里那组滚轮在滚什么：'date' = 年/月/日，'time' = 时/分
@@ -531,6 +551,34 @@
 			 *  —— 空串得有个说法，不然那颗胶囊就是空的 */
 			timeText() {
 				return this.time || '未填'
+			},
+			/**
+			 * 当前分类**所在的整棵分类树**（父 + 它的全部子分类），喂给候选排序做「同分类加权」。
+			 *
+			 * ★ 要上寻到父：用户在下级「水费」里记账，而高频备注多半是在父级「水电」下记出来的 ——
+			 *   只拿选中的那个 id 去比，最该出现的那条反而没了加权。在记账这件事上，子分类和它的
+			 *   父分类本来就是一类，用户心里不会分开算。
+			 * 未选分类（含转账，它没有分类）→ null，此时只按「频次 + 最近」排。
+			 * 直接读内存里的 this.catList，不查库：这棵树就在手边。
+			 */
+			noteTreeIds() {
+				const p = this.catList.find((c) => c.id === this.pickedParentId)
+				if (!p) return null
+				return [p.id].concat(p.subs.map((s) => s.id))
+			},
+			/**
+			 * 备注候选（≤5 条）。怎么筛怎么排全在 services/note.js 里（断言在 scripts/note-repro.mjs）；
+			 * 这里只喂数据。**输入为空时它自己返回空数组** —— 「没输入就不弹」是那条断言的职责，
+			 * 别在这一层再判一次（判重了没人知道是哪一层在起作用）。
+			 */
+			noteSugs() {
+				if (!this.noteStats) return []
+				return buildSuggestions(this.noteStats, {
+					keyword: this.note,
+					treeIds: this.noteTreeIds,
+					today: this.todayStr(),
+					limit: 5
+				})
 			}
 		},
 		async onLoad(options) {
@@ -547,6 +595,10 @@
 		onShow() {
 			this.loadCategories() // M2 语义：每次显示刷新分类（新增后返回也能看到）
 			this.loadAccounts() // M6：账户可能刚在账户页被改名/删除
+			// 备注统计同理：别处新记一笔、或导入了备份，候选底料就变了。
+			// 置空而不是在这里重查 —— 查了也多数用不上（用户这一笔未必填备注），
+			// 留到真正聚焦备注框时再查（见 ensureNoteStats）
+			this.noteStats = null
 		},
 		methods: {
 			// ---- 色板高亮（放在 methods：模板里是当函数调用的；放进 computed 会报
@@ -661,6 +713,27 @@
 						title: '账户加载失败',
 						icon: 'none'
 					})
+				}
+			},
+			/**
+			 * 拉备注候选的底料（getNoteStats）。**懒加载**：真正聚焦备注框时才查 ——
+			 * 多数记账并不填备注，每次进页面都扫一遍全表不值当。
+			 *
+			 * null 与 [] 分开：查过之后（失败也置 []）本页内不再重试，免得每聚焦一次就打一次库；
+			 * onShow 会把 noteStats 置回 null，让下次聚焦重查（别处可能刚记了一笔、或导入了备份）。
+			 * 竞态不管：这条查询是本地的、几毫秒回来，慢到能撞上 onShow 的数据变化并不存在。
+			 */
+			async ensureNoteStats() {
+				if (this.noteStats || this.noteLoading) return
+				this.noteLoading = true
+				try {
+					this.noteStats = await getNoteStats()
+				} catch (e) {
+					console.error('[edit] 备注统计加载失败', e)
+					// 出候选这步失败不该拦着记账 —— 静默降级成「没有候选」，输入框照常用
+					this.noteStats = []
+				} finally {
+					this.noteLoading = false
 				}
 			},
 			// ---- 选择账户（底部卡片，与日期卡片同机制）----
@@ -1602,6 +1675,30 @@
 		display: flex;
 		gap: 20rpx;
 		padding: 20rpx 40rpx 20rpx;
+	}
+
+	// 常用备注候选：紧贴备注那行底下（所以在 .meta-row 与 .dt-row 之间），占位正常撑开页面流。
+	// 圆角/底色沿用账户筛选那种胶囊（用户裁定过的形状），文字用主色 —— 这几个字是**可点的**，
+	// 和旁边「日期」「时刻」那种只读标签得区分开。
+	.sug-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 16rpx;
+		padding: 0 40rpx 20rpx;
+
+		.sug {
+			max-width: 100%;
+			padding: 12rpx 26rpx;
+			border-radius: 999rpx;
+			background: var(--md-surface);
+			font-size: 25rpx;
+			color: var(--md-primary-strong);
+			// 备注最长 50 字，长长的一条会把这行撑成两三行、顶出键盘上方那条保护带。
+			// 限宽 + 省略号：一条最多占满一行，整块最多两行
+			overflow: hidden;
+			white-space: nowrap;
+			text-overflow: ellipsis;
+		}
 	}
 
 	// 「日期」「时刻」两个胶囊各占一半（用户裁定）：与备注同一行会把备注压太窄，单独一行

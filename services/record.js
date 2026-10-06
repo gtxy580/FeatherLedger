@@ -634,6 +634,51 @@ export async function getAccountTotals({ start, end, cid, includeSub = false } =
 }
 
 /**
+ * 每个备注用过多少次、最后一次哪天、在哪些分类下用过 —— 记一笔页的「高频备注」候选靠它。
+ *
+ * ★ 这是**全量**的：不分期间、也不按分类过滤。候选要回答的是「我一贯怎么记」，不是
+ *   「这个月怎么记」；分类的偏好交给排序层（services/note.js）按「在当前分类下用过没有」
+ *   加权 —— 在数据层按分类砍掉，用户换一次分类就得重查一次库。
+ *
+ * 空备注排掉：转账那笔手续费是 note = '' 的真实支出行（见 upsertFeeRow），每笔转账都带一条，
+ * 不排掉的话候选里会钻出一堆看不见的空条。
+ *
+ * 分组键是 (note, category_id) 而不是 note：同一个备注在父分类和子分类下都记过时要**留着
+ * 两个分类**（页面要判「当前分类下用过没有」），合并放到 JS 里做。
+ */
+export async function getNoteStats() {
+  // ★ 聚合放在 JS 里，不写成 SQL 的 COUNT/MAX + GROUP BY：
+  //   ① cids（这条备注在哪些分类下用过）本来就只能靠 JS 合并 —— SQL 一次给不出数组；
+  //   ② 于是「次数、最近日期」走 SQL、cids 走 JS 就成了同一函数里的两条并行路径，
+  //      两边一旦不一致（真机与复现脚本的 SQL 支持度本来就有细微出入）很难发现。
+  //      全走 JS 就只有一条路径。数据量撑得住：个人记账一年几百到几千条，只取三列。
+  const rows = await query(
+    `SELECT r.note AS note, r.category_id AS cid, r.date AS date
+     FROM records r
+     WHERE r.note IS NOT NULL AND r.note <> ''`
+  )
+
+  const merged = new Map()
+  for (const r of rows) {
+    const note = String(r.note || '')
+    if (!note) continue
+    let one = merged.get(note)
+    if (!one) {
+      one = { note, count: 0, lastUsed: '', cids: [] }
+      merged.set(note, one)
+    }
+    one.count += 1
+    if (r.cid != null && !one.cids.includes(Number(r.cid))) one.cids.push(Number(r.cid))
+    // 'YYYY-MM-DD' 的字典序即时间序
+    const d = String(r.date || '')
+    if (d > one.lastUsed) one.lastUsed = d
+  }
+
+  // 这个顺序只是为了结果确定，好写断言；真正给用户看的顺序由 note.js 排
+  return [...merged.values()].sort((a, b) => b.count - a.count || a.note.localeCompare(b.note))
+}
+
+/**
  * 期间内出现过、但分类表里已经查不到的 category_id（= 已删除分类）。
  *
  * 为什么不写成一个 SQL 谓词：`... AND c.id IS NULL`（分类被删时 LEFT JOIN 落空）在**真机
