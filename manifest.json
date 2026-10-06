@@ -2,8 +2,8 @@
     "name" : "飞鸟记账",
     "appid" : "__UNI__18CD643",
     "description" : "本地记账：明细、分类、账户、统计与主题。数据只存在本机，不联网、不上传。",
-    "versionName" : "1.1.0",
-    "versionCode" : "110",
+    "versionName" : "1.2.0",
+    "versionCode" : "120",
     "transformPx" : false,
     /* 5+App特有相关 */
     "app-plus" : {
