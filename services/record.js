@@ -569,6 +569,71 @@ async function subtreeIds(cid) {
 }
 
 /**
+ * 按账户汇总某一期的收支 —— **账户筛选弹层里每一行显示的就是它**。
+ *
+ * ★ 它与「账户余额」不是一回事，别混：`listAccounts()` 给的 `balance` 是**累计到今天**的，
+ *   与用户正在看的那一期无关。用户翻到 8 月、点开账户筛选，想问的是「8 月我这几个账户
+ *   各花了多少」，而不是「我现在卡里还有多少」—— 后者在这块地方出现，跟满屏的 8 月数据
+ *   放在一起就是个假数字。
+ *
+ * 转账（type = 3）不是收支，两个 CASE 都命中不了它 —— 与首页汇总卡、分类占比同一口径。
+ *
+ * @param {Object} p
+ * @param {string} p.start 起（含）'YYYY-MM-DD'
+ * @param {string} p.end 止（含）'YYYY-MM-DD'
+ * @param {number|null} [p.cid] 只算这个分类下的流水（分类明细页用）；null = 已删除分类；
+ *   **省略** = 不限分类（首页用）。注意 null 与省略是两件事。
+ * @param {boolean} [p.includeSub] cid 是否连子分类一起
+ * @returns {Promise<{accounts: Array<{id, income, expense}>, total: {income, expense}>}>
+ *   金额均为分。accounts 只含**这一期真有过流水**的账户（不会留一串 0 的空行）；
+ *   total 是该分类/期间下**全部**流水的合计，与 getCategoryStats 的口径一致。
+ */
+export async function getAccountTotals({ start, end, cid, includeSub = false } = {}) {
+  const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v)
+  if (!isDate(start) || !isDate(end)) throw new Error('start/end 必须是 YYYY-MM-DD 格式')
+  if (cid !== undefined && cid !== null && !Number.isInteger(cid)) {
+    throw new Error('cid 必须是整数、null 或省略')
+  }
+
+  // 分类谓词与 getCategoryRecords 同一套：只引用 records 自己的列（理由见那边的注释）
+  let catWhere = ''
+  if (cid === null) {
+    const ids = await orphanCategoryIds(null, start, end, null)
+    if (!ids.length) return { accounts: [], total: { income: 0, expense: 0 } }
+    catWhere = ` AND r.category_id IN (${ids.join(',')})`
+  } else if (cid !== undefined) {
+    const ids = includeSub ? await subtreeIds(cid) : [cid]
+    catWhere = ` AND r.category_id IN (${ids.join(',')})`
+  }
+
+  const rows = await query(
+    `SELECT r.account_id AS aid,
+      SUM(CASE WHEN r.type = 1 THEN r.amount ELSE 0 END) AS expense,
+      SUM(CASE WHEN r.type = 2 THEN r.amount ELSE 0 END) AS income
+    FROM records r
+    WHERE r.date >= ${esc(start)} AND r.date <= ${esc(end)}${catWhere}
+    GROUP BY r.account_id`
+  )
+
+  const num = (v) => Number(v || 0)
+  // 只有转账往来的账户会落成 0/0（转账不算收支）—— 那种行在弹层里是个没信息的空壳，去掉。
+  // aid 为空的组（理论上不存在：App 保证每笔流水都有账户）不计入 accounts，但仍进 total。
+  const accounts = rows
+    .filter((r) => r.aid != null)
+    .map((r) => ({ id: Number(r.aid), income: num(r.income), expense: num(r.expense) }))
+    .filter((a) => a.income > 0 || a.expense > 0)
+    .sort((a, b) => a.id - b.id)
+
+  const total = { income: 0, expense: 0 }
+  for (const r of rows) {
+    total.income += num(r.income)
+    total.expense += num(r.expense)
+  }
+
+  return { accounts, total }
+}
+
+/**
  * 期间内出现过、但分类表里已经查不到的 category_id（= 已删除分类）。
  *
  * 为什么不写成一个 SQL 谓词：`... AND c.id IS NULL`（分类被删时 LEFT JOIN 落空）在**真机
@@ -578,9 +643,11 @@ async function subtreeIds(cid) {
  * 的「静默给错答案」。拆成两步之后每个查询只引用单张表的列，脚本与真机保证同一个答案。
  */
 async function orphanCategoryIds(type, start, end, accountId) {
+  // type 传 null/undefined = 不按收支过滤（getAccountTotals 要同时拿收入和支出两个数）
+  const typeWhere = type == null ? '' : `r.type = ${type} AND `
   const rows = await query(
     `SELECT r.category_id AS cid FROM records r
-    WHERE r.type = ${type} AND r.date >= ${esc(start)} AND r.date <= ${esc(end)}${accountWhere(accountId, 'r.')}
+    WHERE ${typeWhere}r.date >= ${esc(start)} AND r.date <= ${esc(end)}${accountWhere(accountId, 'r.')}
       AND r.category_id IS NOT NULL
     GROUP BY r.category_id`
   )

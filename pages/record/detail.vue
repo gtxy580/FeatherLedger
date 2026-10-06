@@ -92,6 +92,7 @@
 				<view class="af-grab"></view>
 				<text class="af-title">账户筛选</text>
 				<view class="ap-list">
+					<!-- 「全部账户」不显示收支（用户裁定，与首页一致） -->
 					<view class="ap-item all" :class="{ on: accountId == null }" @click="pickAccount(null)">
 						<text class="ap-name">全部账户</text>
 						<view v-if="accountId == null" class="ap-check" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
@@ -100,10 +101,15 @@
 					<view v-for="a in accounts" :key="a.id" class="ap-item" :class="{ on: a.id === accountId }"
 						@click="pickAccount(a.id)">
 						<category-icon :icon="a.icon" :color="a.color" :name="a.name" :size="56" />
-						<text class="ap-name">{{ a.name }}</text>
-						<view v-if="a.id === accountId" class="ap-check" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
+						<view class="ap-mid">
+							<text class="ap-name">{{ a.name }}</text>
+							<view class="ap-nums num">
+								<text>支 {{ fmtYuan(acctOf(a.id).expense) }}</text>
+								<text class="inc">收 {{ fmtYuan(acctOf(a.id).income) }}</text>
+							</view>
+						</view>
 						<view class="ap-gap"></view>
-						<text class="ap-bal num">{{ fmtYuan(a.balance) }} 元</text>
+						<view v-if="a.id === accountId" class="ap-check" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
 					</view>
 				</view>
 				<view class="af-btns">
@@ -120,6 +126,7 @@
 <script>
 	import {
 		getCategoryRecords,
+		getAccountTotals,
 		deleteRecord,
 		decorateRecord
 	} from '@/services/record.js'
@@ -167,6 +174,8 @@
 				// 账户筛选
 				accounts: [],
 				accountId: null,
+				// **这一期、这一个分类下**各账户的收支 —— 弹层里显示的是它，不是账户余额
+				acctTotals: [],
 				acctToken: 0,
 				showAcctPicker: false,
 				apClosing: false,
@@ -300,19 +309,35 @@
 				this.accountId = id
 				this.load()
 			},
+			/** 本期这个分类下、这个账户的收支（没记过账 → 0 / 0） */
+			acctOf(id) {
+				return this.acctTotals.find((x) => x.id === id) || { income: 0, expense: 0 }
+			},
 			async load() {
 				const token = ++this.loadToken
 				try {
-					const data = await getCategoryRecords({
-						type: this.isExpense ? 1 : 2,
-						start: this.start,
-						end: this.end,
-						cid: this.cid,
-						includeSub: this.includeSub,
-						groupBy: this.gran === 'year' ? 'month' : 'day',
-						accountId: this.accountId
-					})
+					const [data, totals] = await Promise.all([
+						getCategoryRecords({
+							type: this.isExpense ? 1 : 2,
+							start: this.start,
+							end: this.end,
+							cid: this.cid,
+							includeSub: this.includeSub,
+							groupBy: this.gran === 'year' ? 'month' : 'day',
+							accountId: this.accountId
+						}),
+						// 账户筛选弹层要的是「**这一个分类**下、各账户在这一期的收支」，
+						// 所以带上 cid/includeSub —— 与上面那条查询同一个口径。
+						// 它不按支出/收入过滤：两个数都要显示（支出分类下的收入自然是 0）。
+						getAccountTotals({
+							start: this.start,
+							end: this.end,
+							cid: this.cid,
+							includeSub: this.includeSub
+						})
+					])
 					if (token !== this.loadToken) return // 已被取代的请求丢弃
+					this.acctTotals = totals.accounts
 					// 明细行带不带账户名：只在「全部账户」视图下带（与首页同规）；
 					// **不带分类名** —— 整页都是同一个分类，每行重复它是噪音（decorateRecord 的 showCategory）
 					const deco = { showAccount: this.accountId == null, showCategory: false }
@@ -706,6 +731,15 @@
 				}
 			}
 
+			// 名字与「支 / 收」上下两行（与首页那一份保持一致）
+			.ap-mid {
+				flex: 1;
+				min-width: 0;
+				display: flex;
+				flex-direction: column;
+				gap: 6rpx;
+			}
+
 			.ap-name {
 				min-width: 0;
 				font-size: 28rpx;
@@ -715,15 +749,22 @@
 				text-overflow: ellipsis;
 			}
 
-			// 弹性空档：撑开名字/对勾与余额之间的空白；余额因此仍贴右
+			// 本期该账户的收支（**不是余额**）：支出走中性色、收入走收入色
+			.ap-nums {
+				display: flex;
+				gap: 24rpx;
+				font-size: 24rpx;
+				color: var(--md-on-surface-variant);
+
+				.inc {
+					color: var(--md-income);
+				}
+			}
+
+			// 弹性空档：撑开名字那两行与右侧对勾之间的空白；对勾因此仍贴右
 			.ap-gap {
 				flex: 1;
 				min-width: 0;
-			}
-
-			.ap-bal {
-				font-size: 26rpx;
-				color: var(--md-on-surface-variant);
 			}
 
 			.ap-check {

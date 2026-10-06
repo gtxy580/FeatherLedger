@@ -172,6 +172,8 @@
 				<view class="af-grab"></view>
 				<text class="af-title">账户筛选</text>
 				<view class="ap-list">
+					<!-- 「全部账户」不显示收支（用户裁定）：它不是某个账户，写两个数在这里
+					     反而像是「另一个账户」，而它代表的是「不筛」 -->
 					<view class="ap-item all" :class="{ on: accountId == null }" @click="pickAccount(null)">
 						<text class="ap-name">全部账户</text>
 						<view v-if="accountId == null" class="ap-check" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
@@ -180,10 +182,15 @@
 					<view v-for="a in accounts" :key="a.id" class="ap-item" :class="{ on: a.id === accountId }"
 						@click="pickAccount(a.id)">
 						<category-icon :icon="a.icon" :color="a.color" :name="a.name" :size="56" />
-						<text class="ap-name">{{ a.name }}</text>
-						<view v-if="a.id === accountId" class="ap-check" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
+						<view class="ap-mid">
+							<text class="ap-name">{{ a.name }}</text>
+							<view class="ap-nums num">
+								<text>支 {{ fmtYuan(acctOf(a.id).expense) }}</text>
+								<text class="inc">收 {{ fmtYuan(acctOf(a.id).income) }}</text>
+							</view>
+						</view>
 						<view class="ap-gap"></view>
-						<text class="ap-bal num">{{ fmtYuan(a.balance) }} 元</text>
+						<view v-if="a.id === accountId" class="ap-check" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
 					</view>
 				</view>
 				<view class="af-btns">
@@ -233,6 +240,7 @@
 	import {
 		getMonthlyData,
 		getYearlyData,
+		getAccountTotals,
 		deleteRecord,
 		decorateRecord
 	} from '@/services/record.js'
@@ -303,6 +311,9 @@
 				// M6 账户筛选（null = 全部）
 				accounts: [],
 				accountId: null,
+				// 本期各账户的收支（`[{id, income, expense}]`），账户筛选弹层里显示的是它，
+				// **不是账户余额** —— balance 是累计到今天的，与用户正在看的这一期无关
+				acctTotals: [],
 				acctToken: 0,
 				showAcctPicker: false,
 				apClosing: false,
@@ -537,13 +548,35 @@
 				}
 				this.load()
 			},
+			/** 当前视图的起止日（'YYYY-MM-DD'）—— 账户收支那一项要按同一个期间算 */
+			periodRange() {
+				if (this.mode === 'year') return { start: `${this.year}-01-01`, end: `${this.year}-12-31` }
+				const [y, m] = this.month.split('-').map(Number)
+				const last = new Date(y, m, 0).getDate() // 下个月的第 0 天 = 本月最后一天（闰年 2 月自动对）
+				return { start: `${this.month}-01`, end: `${this.month}-${String(last).padStart(2, '0')}` }
+			},
+			/**
+			 * 本期这个账户的收支（这一期没记过账的账户 → 0 / 0）。
+			 * 账户**筛选**弹层里显示的是它，不是 `a.balance` —— 余额是累计到今天的，
+			 * 摆在满屏某一期的数据旁边就是个假数字。
+			 */
+			acctOf(id) {
+				return this.acctTotals.find((x) => x.id === id) || { income: 0, expense: 0 }
+			},
 			async load() {
 				const token = ++this.loadToken
 				try {
-					const data = this.mode === 'month' ?
-						await getMonthlyData(this.month, this.accountId) :
-						await getYearlyData(this.year, this.accountId)
+					const period = this.periodRange()
+					// 账户收支与主查询并发：它只服务筛选弹层，但**每次切期都要跟着换**，
+					// 否则弹层里还留着上一期的数
+					const [data, totals] = await Promise.all([
+						this.mode === 'month' ?
+							getMonthlyData(this.month, this.accountId) :
+							getYearlyData(this.year, this.accountId),
+						getAccountTotals(period)
+					])
 					if (token !== this.loadToken) return // 已切期，晚到响应丢弃
+					this.acctTotals = totals.accounts
 					// 明细行要不要带上「这笔属于哪个账户」：只在「全部账户」视图下带 ——
 					// 筛了某个账户时，满行重复同一个名字是噪音（用户裁定）。
 					// 账户名本身在 REC_SELECT 里已经取回（fa.name → fromName），这里只决定显不显示。
@@ -1277,6 +1310,16 @@
 			}
 
 			// 名字不再吃掉整行：对勾紧跟在它后面（用户裁定），余下宽度交给 .ap-gap
+			// 名字与「支 / 收」上下两行。挤成一行时，长金额会把名字压没 ——
+			// 而账户名才是用户在这一屏里真正要找的东西。
+			.ap-mid {
+				flex: 1;
+				min-width: 0;
+				display: flex;
+				flex-direction: column;
+				gap: 6rpx;
+			}
+
 			.ap-name {
 				min-width: 0;
 				font-size: 28rpx;
@@ -1286,15 +1329,23 @@
 				text-overflow: ellipsis;
 			}
 
-			// 弹性空档：撑开名字/对勾与余额之间的空白；余额因此仍贴右
+			// 本期该账户的收支（**不是余额**）：支出走中性色、收入走收入色，
+			// 与首页汇总卡、分类占比同一套语义色
+			.ap-nums {
+				display: flex;
+				gap: 24rpx;
+				font-size: 24rpx;
+				color: var(--md-on-surface-variant);
+
+				.inc {
+					color: var(--md-income);
+				}
+			}
+
+			// 弹性空档：撑开名字那两行与右侧对勾之间的空白；对勾因此仍贴右
 			.ap-gap {
 				flex: 1;
 				min-width: 0;
-			}
-
-			.ap-bal {
-				font-size: 26rpx;
-				color: var(--md-on-surface-variant);
 			}
 
 			.ap-check {
