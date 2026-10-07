@@ -97,8 +97,9 @@
 						<text v-if="g.income" class="inc">收 {{ fmtYuan(g.income) }}</text>
 					</view>
 				</view>
-				<view v-for="r in g.records" :key="r.id" class="row" :class="{ managing: manageMode }"
-					@click.stop="onRowTap" @touchstart="onRowPressStart($event, r)" @touchmove="onRowPressMove"
+				<view v-for="r in g.records" :key="r.id" class="row"
+					:class="{ managing: manageMode, pressing: pressedRowId === r.id }" @click.stop="onRowTap"
+					@touchstart="onRowPressStart($event, r)" @touchmove="onRowPressMove"
 					@touchend="onRowPressEnd" @touchcancel="onRowPressEnd">
 					<category-icon :icon="r.iconKey" :color="r.iconColor" :name="r.iconName" :size="80" />
 					<view class="txt">
@@ -307,6 +308,10 @@
 				pressFired: false, // 这一次按压已经进过管理模式（用来吞掉随后派生出的那次 click）
 				pressStartX: 0,
 				pressStartY: 0,
+				// 长按**成立**的那一行（null = 没有）。★ 手指落下时**不设** —— 那样点一下
+				// 也会闪一下底色，而点一行是日常操作，那下闪是噪音。只在长按真的成立、
+				// 进管理模式的那一刻设上，抬手清掉（见 onRowPressStart）
+				pressedRowId: null,
 				loadToken: 0, // 请求令牌：快速切期丢弃晚到响应（收口审查 M1）
 				// M6 账户筛选（null = 全部）
 				accounts: [],
@@ -706,6 +711,10 @@
 					this.pressTimer = null
 					this.pressFired = true
 					this.manageMode = true
+					// ★ 按下态**在这一刻才出现**，不是手指落下时（用户裁定）：手指落下就给反馈，
+					// 等于点一下也会闪一下 —— 而点一行是日常操作，那下闪是噪音不是反馈。
+					// 长按成立了才把这一行压深、缩小（见 .row.pressing），留到抬手。
+					this.pressedRowId = r.id
 					// 触觉反馈：模式变了但画面只是「开始抖」，先震一下（与分类页同法）
 					if (uni.vibrateShort) uni.vibrateShort({ fail: () => {} })
 				}, LONG_PRESS_MS)
@@ -724,6 +733,8 @@
 				}
 			},
 			onRowPressEnd() {
+				// 抬手就退：管理模式留着，只是这一行不再压深、缩回去
+				this.pressedRowId = null
 				if (this.pressTimer) {
 					clearTimeout(this.pressTimer)
 					this.pressTimer = null
@@ -1094,7 +1105,24 @@
 		// 进编辑态时右侧内距 28 → 96rpx，金额因此往左让 —— 让这条动起来，金额就是「被挤过去」
 		// 而不是瞬移（退出时反向滑回）。**只过渡 padding-right**：上下内距没有变化点，
 		// 写成 padding 只会让别处改动也变得黏糊。0.22s ease-out 与项目其余过渡同一档。
-		transition: padding-right 0.22s ease-out;
+		//
+		// background / transform 是后加的（按下反馈）：0.08s 与 .af-press 同档 —— 再慢就从
+		// 「手感」变成「动画」了。三条过渡互不相干，各写各的时长，别合并成一条
+		// （那会让其中一方被迫接受另一方的节奏）。
+		//
+		// ★ transform 必须写在这里，不能靠给 .row 挂 .af-press ——.af-press 的 transition 在
+		//   App.vue（全局），页面样式优先级更高会把它整个盖掉，那样缩放就没有过渡、硬跳。
+		transition: padding-right 0.22s ease-out, background 0.08s ease-out, transform 0.08s ease-out;
+
+		// 长按成立后的反馈：**缩一下**（.af-press 同一个 0.9，手感与按按钮一致）+ 底色深一档。
+		// 只有变色是不够的（用户反馈：「只是变色并没有按一个按钮的感觉」）—— 首页进管理模式时
+		// **不抖**（早先裁定），只有右侧图标淡入 + 一下震动，所以这 0.9 是按住 500ms 后唯一
+		// 明确的「按到了」的信号，值得给足。
+		// 抬手即退；底色那档正好是卡片与页面底的差值，切主题自动跟随。
+		&.pressing {
+			background: var(--md-surface-container);
+			transform: scale(0.9);
+		}
 
 		// 管理态：给右侧两枚图标让出横向空间 —— 金额靠这条内距往左挤。
 		// 96rpx = 图标盒 44rpx + 与金额的间隔 24rpx + 行本身的右内距 28rpx（改 .act 尺寸时这条要跟着算）。

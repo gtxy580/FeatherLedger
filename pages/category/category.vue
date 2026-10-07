@@ -161,6 +161,8 @@
 		moveCategory,
 		reorderCategories,
 		countRecordsByCategory,
+		defaultCategoryColor,
+		getSubColorMode,
 		CATEGORY_NAME_MAX
 	} from '@/services/category.js'
 	import {
@@ -215,6 +217,9 @@
 				edName: '',
 				edIcon: '', // ICONS 的 key（不带 svg: 前缀）；空 = 用名称首字
 				edColor: '', // PALETTE_COLORS 之一（= 主题色板，同一套 10 个）；空 = 主分类用组件默认、子分类跟随主分类色
+				// 子分类默认颜色的策略（主题页那个开关）—— 只在新建卡片打开那一刻被读，
+				// 所以在 onShow 里查好放着；openEditSub 是同步的，没法当场 await
+				subMode: 'follow',
 			}
 		},
 		computed: {
@@ -266,6 +271,8 @@
 		},
 		onShow() {
 			this.load() // 与首页/记账页同规：每次显示重查，页面不持有真相
+			// 策略同理：可能刚在主题页改过
+			this.refreshSubMode()
 		},
 		/** 安卓返回键：确认框开着时，返回＝取消（返回 true 消费掉事件，不退出页面） */
 		onBackPress() {
@@ -760,12 +767,13 @@
 			},
 
 			// ---- 编辑卡片：新增主分类 / 新增子分类 / 编辑已有，共用一个卡片 ----
-			/**
-			 * 新建时的默认颜色：从可选色板里随机取一个（用户裁定）——比一律给默认灰有生气。
-			 * 只用于**新建主分类**与**新建账户**；新建子分类仍留空（空 = 跟随主分类色，那比随机更对）。
-			 */
-			pickRandomColor() {
-				return PALETTE_COLORS[Math.floor(Math.random() * PALETTE_COLORS.length)]
+			/** 读一次「子分类默认颜色」的策略。失败不惊动用户：留上一次的值（缺省 follow）就行 */
+			async refreshSubMode() {
+				try {
+					this.subMode = await getSubColorMode()
+				} catch (e) {
+					console.error('[category] 子分类颜色策略读取失败', e)
+				}
 			},
 			openEditTop(c) {
 				if (this.editTimer) clearTimeout(this.editTimer)
@@ -775,7 +783,8 @@
 				this.edParentId = null
 				this.edName = c ? c.name : ''
 				this.edIcon = c && c.icon.startsWith('svg:') ? c.icon.slice(4) : ''
-				this.edColor = c ? c.color : this.pickRandomColor()
+				// 新建主分类的默认色：一直随机（与账户页同一个来源，见 palette.js 的 randomPaletteColor）
+				this.edColor = c ? c.color : defaultCategoryColor(this.subMode, false)
 				this.showEdit = true
 			},
 			openEditSub(parent, s) {
@@ -786,7 +795,8 @@
 				this.edParentId = parent.id
 				this.edName = s ? s.name : ''
 				this.edIcon = s && s.icon.startsWith('svg:') ? s.icon.slice(4) : ''
-				this.edColor = s ? s.color : ''
+				// 新建子分类的默认色由主题页那个开关决定（follow → 空串，即跟随主分类色）
+				this.edColor = s ? s.color : defaultCategoryColor(this.subMode, true)
 				this.showEdit = true
 			},
 			closeEdit() {

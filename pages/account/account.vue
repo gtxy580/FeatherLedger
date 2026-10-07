@@ -146,7 +146,7 @@
 
 <script>
 import { maskStyle, ACCOUNT_ICON_KEYS } from '@/services/icons.js'
-import { PALETTE_COLORS } from '@/services/palette.js'
+import { PALETTE_COLORS, randomPaletteColor } from '@/services/palette.js'
 import {
   listAccounts,
   addAccount,
@@ -246,10 +246,6 @@ export default {
       uni.navigateBack()
     },
     // ---- 新增 / 编辑 ----
-    /** 新建账户的默认颜色：从可选色板里随机取一个（用户裁定）——比一律给默认灰有生气 */
-    pickRandomColor() {
-      return PALETTE_COLORS[Math.floor(Math.random() * PALETTE_COLORS.length)]
-    },
     openCreate() {
       if (this.formTimer) clearTimeout(this.formTimer)
       this.formClosing = false
@@ -257,7 +253,8 @@ export default {
       this.editingDefault = false
       this.formName = ''
       this.formIcon = ''
-      this.formColor = this.pickRandomColor()
+      // 新建账户的默认色：一直随机（来源收在 palette.js，分类页与这里是同一份实现）
+      this.formColor = randomPaletteColor()
       this.formBalance = ''
       this.showForm = true
     },

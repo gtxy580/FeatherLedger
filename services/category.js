@@ -3,12 +3,59 @@
  */
 import { query, exec, esc, now } from './db.js'
 import { getFeeCategoryId } from './record.js'
+import { getMeta, setMeta } from './meta.js'
+import { randomPaletteColor } from './palette.js'
 
 /**
  * 分类名（主分类与子分类同规）上限。**导出**：页面拿它做输入框的 `:maxlength`
  * 与旁边的实时计数（「2/6」）—— 同一个数只留一个源。
  */
 export const CATEGORY_NAME_MAX = 6
+
+/** 子分类默认颜色策略存在 meta 里的键 */
+const SUB_COLOR_MODE_KEY = 'subColorMode'
+
+/**
+ * 两种策略。**带中文名一起导出**：主题页直接 `v-for` 渲染这两格，
+ * 与 `THEMES` 同一个模式 —— 选项的文字只在服务层写一遍。
+ */
+export const SUB_COLOR_MODES = [
+	{ key: 'follow', name: '跟随主分类', hint: '子分类不单独配色，用主分类的颜色' },
+	{ key: 'random', name: '随机', hint: '新建子分类时先分一个色板里的色（之后能改）' }
+]
+
+/**
+ * 当前策略。**认不出的值一律回落 `follow`** —— meta 是用户可导入的备份能改到的表，
+ * 一个脏值不该让新建卡片出不来颜色或者直接抛错。
+ */
+export async function getSubColorMode() {
+	const raw = await getMeta(SUB_COLOR_MODE_KEY)
+	return SUB_COLOR_MODES.some((m) => m.key === raw) ? raw : 'follow'
+}
+
+/** 写策略；认不出的 key 直接拒绝（同 setAccent，别把脏值写进库） */
+export async function setSubColorMode(mode) {
+	if (!SUB_COLOR_MODES.some((m) => m.key === mode)) throw new Error(`未知的子分类颜色策略：${mode}`)
+	await setMeta(SUB_COLOR_MODE_KEY, mode)
+}
+
+/**
+ * 新建分类时，颜色那一格**预填**成什么。调用方是「打开新建卡片」那一刻
+ * （`c ? c.color : defaultCategoryColor(mode, false)`）—— 编辑既有分类时不走这里。
+ *
+ * ★ 只影响默认值，不落库也不改任何已有数据：用户在卡片里改、或者干脆清空，
+ *   存进去的就是他最后看到的那个值。这也是「策略只管以后新建的」这句裁定的落点。
+ * ★ 主分类**不受策略影响**，一直是随机（先前裁定的行为，别被这个开关顺手改掉）——
+ *   所以 isSub 是必填参数，不是靠 mode 一个值去猜两类分类。
+ *
+ * @param {'follow'|'random'} mode 当前策略
+ * @param {boolean} isSub 新建的是子分类吗
+ * @returns {string} 色值；空串 = 跟随主分类（只有子分类会返回空串）
+ */
+export function defaultCategoryColor(mode, isSub) {
+	if (!isSub) return randomPaletteColor()
+	return mode === 'random' ? randomPaletteColor() : ''
+}
 
 /**
  * 取分类树，按收支分组、组内按 sort,id 排序。

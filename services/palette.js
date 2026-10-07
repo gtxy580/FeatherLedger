@@ -130,3 +130,16 @@ export function paletteColor(key) {
 	const p = PALETTE.find((x) => x.key === key)
 	return p ? p.color : ''
 }
+
+/**
+ * 从色板里随机取一个色 —— 新建主分类 / 账户 / （策略为「随机」时的）子分类的默认底色。
+ *
+ * ★ 随机**不避开任何颜色**（用户裁定）：父分类是「餐饮」的橙，新建子分类照样可能随机到橙。
+ *   撞色时用户在卡片上看得见、随手能改；为它去算「哪些色已被占用」要读一遍分类表 +
+ *   账户表，换来的只是观感上少一处巧合。
+ *
+ * 放在这一层（而不是各页面的 methods）：调用点已经有三处，一份实现才不会各走各的。
+ */
+export function randomPaletteColor() {
+	return PALETTE_COLORS[Math.floor(Math.random() * PALETTE_COLORS.length)]
+}

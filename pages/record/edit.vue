@@ -317,6 +317,8 @@
 	import {
 		getCategoriesGrouped,
 		createCategory,
+		defaultCategoryColor,
+		getSubColorMode,
 		CATEGORY_NAME_MAX
 	} from '@/services/category.js'
 	import {
@@ -398,6 +400,9 @@
 				// 前者该去查，后者不该反复重试。详见 ensureNoteStats
 				noteStats: null,
 				noteLoading: false, // 防重入（非响应式用途，放 data 仅为声明）
+				// 新建子分类时默认给什么颜色（主题页那个开关）。openAddForm 是同步的，
+				// 没法当场 await，所以在 onShow 里查好放着
+				subMode: 'follow',
 				date: '', // 'YYYY-MM-DD'
 				time: '', // 'HH:MM'（24 小时制）；空串 = 没有时刻（老流水）
 				pvMode: 'date', // 卡片里那组滚轮在滚什么：'date' = 年/月/日，'time' = 时/分
@@ -599,6 +604,8 @@
 			// 置空而不是在这里重查 —— 查了也多数用不上（用户这一笔未必填备注），
 			// 留到真正聚焦备注框时再查（见 ensureNoteStats）
 			this.noteStats = null
+			// 子分类默认色的策略：可能刚在主题页改过（这一条要当场读，新建卡片是同步开的）
+			this.refreshSubMode()
 		},
 		methods: {
 			// ---- 色板高亮（放在 methods：模板里是当函数调用的；放进 computed 会报
@@ -713,6 +720,14 @@
 						title: '账户加载失败',
 						icon: 'none'
 					})
+				}
+			},
+			/** 读一次「子分类默认颜色」的策略。失败不惊动用户：留上一次的值（缺省 follow）就行 */
+			async refreshSubMode() {
+				try {
+					this.subMode = await getSubColorMode()
+				} catch (e) {
+					console.error('[edit] 子分类颜色策略读取失败', e)
 				}
 			},
 			/**
@@ -1069,7 +1084,8 @@
 				this.afClosing = false
 				this.afIcon = ''
 				this.afName = ''
-				this.afColor = ''
+				// 新建子分类的默认色由主题页那个开关决定（follow → 空串，即跟随主分类色）
+				this.afColor = defaultCategoryColor(this.subMode, true)
 				this.showAddForm = true
 			},
 			// 退场动画：showAddForm 撑到 afOut 播完再清（v-if 才不会瞬间拆节点）

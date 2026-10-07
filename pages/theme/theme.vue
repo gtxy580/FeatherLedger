@@ -55,6 +55,33 @@
       <view class="pv-hint"><text>收入色与错误色不随主题</text></view>
     </view>
 
+    <!-- 子分类的默认颜色：只决定「新建子分类时颜色那格预填什么」，
+         不碰任何已有分类 —— 所以下面那句提示必须写出来，否则设成「随机」之后
+         看着现有子分类没变，会以为开关坏了 -->
+    <view class="card">
+      <view class="sec">
+        <text class="sec-t">子分类颜色</text>
+        <text class="sec-v">{{ subModeName }}</text>
+      </view>
+      <view
+        v-for="m in subModes"
+        :key="m.key"
+        class="opt"
+        :class="{ on: m.key === subMode, pressing: isPressed('mode:' + m.key) }"
+        @touchstart="pressOn('mode:' + m.key)"
+        @touchend="pressOff"
+        @touchcancel="pressOff"
+        @click="pickSubMode(m.key)"
+      >
+        <view class="opt-txt">
+          <text class="opt-t">{{ m.name }}</text>
+          <text class="opt-h">{{ m.hint }}</text>
+        </view>
+        <view v-if="m.key === subMode" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
+      </view>
+      <view class="pv-hint"><text>只影响新建时的默认颜色，已有的不会变</text></view>
+    </view>
+
     <view class="reset af-press" :class="{ pressing: isPressed('reset') }" @touchstart="pressOn('reset')"
       @touchend="pressOff" @touchcancel="pressOff" @click="reset"><text>恢复默认</text></view>
   </view>
@@ -63,6 +90,7 @@
 <script>
 import { maskStyle } from '@/services/icons.js'
 import { THEMES, DEFAULT_THEME, loadAccent, setAccent } from '@/services/theme.js'
+import { SUB_COLOR_MODES, getSubColorMode, setSubColorMode } from '@/services/category.js'
 import pressFx from '@/services/press.js'
 
 export default {
@@ -72,6 +100,10 @@ export default {
       statusBarHeight: 0,
       themes: THEMES,
       current: DEFAULT_THEME.key,
+      // 子分类的默认颜色策略。选项文字与 hint 都在服务层（SUB_COLOR_MODES），
+      // 这一页只负责画 —— 与 themes 同一个模式
+      subModes: SUB_COLOR_MODES,
+      subMode: 'follow',
       // 预览用的色阶：主题色的关键 token，按**明度从浅到深**排。
       // 值一律写成 var(...)（不是 hex），所以切主题时整排自动跟随 —— 这正是预览的意义，
       // 也让 check-theme-hex 那道「主题色只能有一个来源」的门保持成立。
@@ -106,6 +138,10 @@ export default {
     currentName() {
       const t = THEMES.find((x) => x.key === this.current)
       return t ? t.name : ''
+    },
+    subModeName() {
+      const m = SUB_COLOR_MODES.find((x) => x.key === this.subMode)
+      return m ? m.name : ''
     }
   },
   onLoad() {
@@ -114,6 +150,8 @@ export default {
   async onShow() {
     const t = await loadAccent()
     this.current = t.key
+    // 策略每次显示都重读：它是 meta 里的一格，备份导入能改到它
+    this.subMode = await getSubColorMode()
   },
   methods: {
     maskStyle,
@@ -135,6 +173,23 @@ export default {
         // 不 catch 的话这里会冒未处理的 rejection，而用户只看到「点了没反应」。
         this.current = prev
         uni.showToast({ title: '主题切换失败', icon: 'none' })
+      }
+    },
+    /**
+     * 切「子分类颜色」策略。与 pick 同一套「先上屏、失败退回」。
+     *
+     * 但这里**不需要** syncTheme：它不参与任何颜色变量的计算，只是一个下次打开
+     * 新建卡片时才被读的值。也**不碰已有分类** —— 那是这个开关的定义。
+     */
+    async pickSubMode(key) {
+      if (key === this.subMode) return
+      const prev = this.subMode
+      this.subMode = key
+      try {
+        await setSubColorMode(key)
+      } catch (e) {
+        this.subMode = prev
+        uni.showToast({ title: '设置失败', icon: 'none' })
       }
     },
     reset() {
@@ -248,6 +303,47 @@ export default {
       white-space: nowrap;
       color: var(--md-on-surface-variant);
     }
+  }
+}
+
+// 子分类颜色的两格选项：整行可点，选中行尾一枚勾。
+// 底色用页面底那档（在白卡片上分得出层次），选中的换成浅主色 + 一枚主色勾。
+.opt {
+  margin-top: 16rpx;
+  padding: 22rpx 24rpx;
+  border-radius: 24rpx;
+  background: var(--md-surface-container);
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  // 按下用「淡一档」而不是 .af-press 的 scale(0.9)：整行缩一圈会连文字一起缩，很怪
+  transition: opacity 0.08s ease-out;
+
+  &.pressing {
+    opacity: 0.6;
+  }
+
+  &.on {
+    background: var(--md-primary-container);
+  }
+
+  // 名字与说明上下两行 —— App 端 <view> 是块级，要两行必须显式 flex column
+  .opt-txt {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6rpx;
+  }
+
+  .opt-t {
+    font-size: 27rpx;
+    font-weight: 500;
+    color: var(--md-on-surface);
+  }
+
+  .opt-h {
+    font-size: 23rpx;
+    color: var(--md-on-surface-variant);
   }
 }
 
