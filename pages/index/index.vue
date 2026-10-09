@@ -105,13 +105,14 @@
 			<!-- **只有这一块滚**。列表到底由 scroll-view 自己的 scrolltolower 触发 ——
 			     页头已经不参与滚动了，页面的 onReachBottom 因此永远不会响 -->
 			<scroll-view v-else class="list-body" :scroll-y="listScrollable" :scroll-top="scrollTop"
+				:scroll-into-view="scrollIntoView" scroll-with-animation @scroll="onListScroll"
 				@scrolltolower="onListLower">
 			<!-- 包裹层：measureList() 靠它量「内容总高」—— 列表顶层是多个 .group，
 			     没有这么一个统一的父节点，就只能去猜「最后一个节点是谁」 -->
 			<view class="list-inner">
 			<!-- 分组列表：月视图按天 / 年视图按月，结构同构。走 visibleGroups（懒加载切出来的
 			     那一段），不是 groups —— 数据全量在手，渲染按需放 -->
-			<view v-for="g in visibleGroups" :key="g.key" class="group">
+			<view v-for="g in visibleGroups" :key="g.key" :id="'g-' + g.key" class="group">
 				<view class="group-head">
 					<text class="g-label">{{ g.label }}</text>
 					<view class="g-sub num">
@@ -268,31 +269,18 @@
 			</view>
 		</view>
 
-		<!-- 快速切换期间：自绘滚轮（与记一笔的日期选择同一套——picker-view 在页面内、样式可控；
-		     年列止于今年、当年月列止于当月，因此滚不出未来期间，与 › 的裁定一致） -->
+		<!-- 快速切换期间：**日历**（月态弹月历、年态弹年历）。
+		     期次胶囊 / 月年分段 / 账户筛选都没动 —— 这里只换了弹层里的内容，
+		     所以没有多出一套时间导航。格子上带当天的收支，它同时是选期器和分布视图 -->
 		<view v-if="showPeriodPicker" class="af-scrim" :class="{ closing: ppClosing }" @click="closePeriodPicker">
 			<view class="af-blocker"></view>
 			<view class="af-card" :class="{ closing: ppClosing }" @click.stop>
 				<view class="af-grab"></view>
-				<text class="af-title">选择{{ mode === 'year' ? '年份' : '月份' }}</text>
-				<!-- 选中行由 .pv-capsule 自己画（uni 的指示条按列各画一条，两列就会断开）；
-				     indicator-style 只留高度，保证滚轮的选中槽与胶囊对齐 -->
-				<view class="pv-wrap">
-					<view class="pv-capsule"></view>
-					<picker-view class="pv-view pp-view" :value="pvIndex" indicator-style="height: 88rpx;" @change="onPvChange">
-						<picker-view-column>
-							<view v-for="y in pvYears" :key="y" class="pp-cell">{{ y }}年</view>
-						</picker-view-column>
-						<picker-view-column v-if="mode === 'month'">
-							<view v-for="m in pvMonths" :key="m" class="pp-cell">{{ m }}月</view>
-						</picker-view-column>
-					</picker-view>
-				</view>
+				<period-calendar :mode="mode" :year="calYear" :month="calMonth" :today="todayStr"
+					:values="periodValues" @pick="onCalendarPick" />
 				<view class="af-btns">
 					<view class="af-cancel af-press" :class="{ pressing: isPressed('cancel') }" @touchstart="pressOn('cancel')"
 						@touchend="pressOff" @touchcancel="pressOff" @click="closePeriodPicker"><text>取消</text></view>
-					<view class="af-done af-press" :class="{ pressing: isPressed('ok') }" @touchstart="pressOn('ok')"
-						@touchend="pressOff" @touchcancel="pressOff" @click="confirmPeriod"><text>确定</text></view>
 				</view>
 			</view>
 		</view>
@@ -333,6 +321,8 @@
 	} from '@/services/format.js'
 	import tabSwipe from '@/services/tab-swipe.js'
 	import pressFx from '@/services/press.js'
+	import PeriodCalendar from '@/components/period-calendar/period-calendar.vue'
+	import { todayKey } from '@/services/calendar.js'
 	// 懒加载的切片逻辑（与分类明细页共用一份，可被 scripts/lazy-repro.mjs 覆盖）
 	import {
 		sliceGroups
@@ -352,6 +342,7 @@
 	const LAZY_ROWS = 60
 
 	export default {
+		components: { PeriodCalendar },
 		mixins: [tabSwipe, pressFx],
 		data() {
 			return {
@@ -417,10 +408,9 @@
 				showPeriodPicker: false,
 				ppClosing: false,
 				ppTimer: null,
-				// 滚轮数据（纯数字，模板里补 年/月 后缀）
-				pvYears: [],
-				pvMonths: [],
-				pvIndex: [0]
+				// 滚到哪一组（形如 'g-2026-10-15'）。★ 只在「点日历」时设，用户一动手指就清掉 ——
+				// 不清的话，之后任何一次重渲染都会把列表拽回那一天
+				scrollIntoView: ''
 			}
 		},
 		computed: {
@@ -469,6 +459,28 @@
 			// 定稿：结余正数不加号，负数带减号（复用 fmtYuan，恒两位小数）
 			balanceText() {
 				return `${this.balance >= 0 ? '' : '-'}${this.fmtYuan(Math.abs(this.balance))}`
+			},
+			/** 点期次时弹的日历看哪一期 */
+			calYear() {
+				return this.mode === 'year' ? this.year : Number(this.month.slice(0, 4))
+			},
+			calMonth() {
+				return Number(this.month.slice(5, 7)) || 1
+			},
+			/** 画「今天」那一圈用的 */
+			todayStr() {
+				return todayKey()
+			},
+			/**
+			 * 喂给日历的每格数字：当天的**净收支**（分）。
+			 *
+			 * ★ 用**全量** groups，不是 visibleGroups —— 后者是懒加载切过的、只有渲染出来那一段，
+			 *   而日历要看整月/整年。
+			 */
+			periodValues() {
+				const out = {}
+				for (const g of this.groups) out[g.key] = (g.income || 0) - (g.expense || 0)
+				return out
 			},
 			// 能不能往后翻：不允许切到「当天之后」（用户裁定）。'YYYY-MM'/年份用字符串比较即可
 			canForward() {
@@ -649,55 +661,54 @@
 				this.closeAcctPicker()
 				uni.navigateTo({ url: '/pages/prepay/prepay' })
 			},
-			// ---- 快速切换期间（自绘滚轮，与记一笔的日期选择同一套手法）----
-			/**
-			 * 打开滚轮。年列固定「今年 −10 ~ 今年」；月列随年份收缩——当年只到当前月，
-			 * 所以滚不出未来期间（与 › 按钮置灰同一条裁定）。
-			 */
+			// ---- 快速切换期间（点期次弹日历；点格子＝选期，顺带滚到那天）----
 			openPeriodPicker() {
 				if (this.ppTimer) clearTimeout(this.ppTimer)
 				this.ppClosing = false
-				const nowY = new Date().getFullYear()
-				this.pvYears = []
-				for (let y = nowY - 10; y <= nowY; y++) this.pvYears.push(y)
-				const yi = Math.max(0, this.pvYears.indexOf(this.mode === 'year' ? this.year : Number(this.month.slice(0, 4))))
-				if (this.mode === 'year') {
-					this.pvIndex = [yi]
-				} else {
-					this.pvIndex = [yi, 0]
-					this.rebuildPvMonths()
-					this.pvIndex = [yi, Math.min(Number(this.month.slice(5, 7)) - 1, this.pvMonths.length - 1)]
-				}
 				this.showPeriodPicker = true
 			},
-			/** 月列随年份收缩：当年只到当前月（年列本就止于今年，滚不出未来） */
-			rebuildPvMonths() {
-				const y = this.pvYears[this.pvIndex[0]]
-				const now = new Date()
-				const maxM = y === now.getFullYear() ? now.getMonth() + 1 : 12
-				this.pvMonths = []
-				for (let m = 1; m <= maxM; m++) this.pvMonths.push(m)
-			},
-			onPvChange(e) {
-				const prevYi = this.pvIndex[0]
-				this.pvIndex = e.detail.value
-				if (this.mode !== 'month' || this.pvIndex[0] === prevYi) return
-				this.rebuildPvMonths() // 换年：月列表随之收缩，越界的月要钳回
-				if (this.pvIndex[1] > this.pvMonths.length - 1) {
-					this.pvIndex = [this.pvIndex[0], this.pvMonths.length - 1]
-				}
-			},
-			confirmPeriod() {
+			/**
+			 * 点日历上的一格。月态给 'YYYY-MM-DD'，年态给 'YYYY-MM'。
+			 *
+			 * 月态点到别人的月份（前后月那几格）＝**先切到那个月**，所以日历自己就是翻月器，
+			 * 不需要额外的 ‹ › 按钮；切不切期由下面那个比较判断，不用写分支。
+			 */
+			async onCalendarPick(key) {
 				if (this.mode === 'year') {
-					this.year = this.pvYears[this.pvIndex[0]]
-				} else {
-					const y = this.pvYears[this.pvIndex[0]]
-					const m = this.pvMonths[this.pvIndex[1]]
-					if (!m || !y) return
-					this.month = `${y}-${String(m).padStart(2, '0')}`
+					// 年态点某月 → 切到月视角看那个月（年视角下点月，多半是想看细节了）
+					this.month = key
+					this.year = Number(key.slice(0, 4))
+					this.closePeriodPicker()
+					this.setMode('month')
+					return
 				}
+				const toMonth = key.slice(0, 7)
+				const changed = this.month !== toMonth
+				if (changed) this.month = toMonth
 				this.closePeriodPicker()
-				this.load()
+				if (changed) await this.load()
+				this.scrollToDay(key)
+			},
+			/**
+			 * 滚到某一天。两步都不能少：
+			 *
+			 * ① **先让那天落在渲染范围内** —— 列表是懒加载切片的（visibleGroups），
+			 *    目标节点还没渲染时 `scroll-into-view` 会**静默失败**（不报错、就是不动）。
+			 *    所以先按全量 groups 累加行数，把它前面的都算进来，把 shownRows 抬够。
+			 * ② `$nextTick` 之后才设 scrollIntoView —— 得等新节点真的在 DOM 里。
+			 */
+			scrollToDay(dateKey) {
+				let rows = 0
+				for (const g of this.groups) {
+					rows += g.records.length
+					if (g.key === dateKey) break
+				}
+				if (rows > this.shownRows) this.shownRows = rows
+				this.$nextTick(() => { this.scrollIntoView = 'g-' + dateKey })
+			},
+			/** 用户自己一滚，就清掉「滚到某天」的指令（留着的话下次重渲染会被拽回去） */
+			onListScroll() {
+				if (this.scrollIntoView) this.scrollIntoView = ''
 			},
 			closePeriodPicker() {
 				if (!this.showPeriodPicker || this.ppClosing) return
@@ -1705,19 +1716,6 @@
 					visibility: hidden;
 				}
 			}
-		}
-	}
-
-	// 快速切换期间的滚轮（与记一笔的日期滚轮同尺寸：指示条高度 = 行高）
-	.pp-view {
-		height: 400rpx;
-
-		.pp-cell {
-			height: 88rpx;
-			line-height: 88rpx;
-			text-align: center;
-			font-size: 30rpx;
-			color: var(--md-on-surface);
 		}
 	}
 
