@@ -97,6 +97,25 @@ export function isFuturePeriod(key, nowMonth) {
 }
 
 /**
+ * 还能不能往后翻一期。
+ *
+ * 「不能切到未来」这条裁定原本在三个地方各写了一遍（首页 ›、预付历史 ›、日历弹层的 ›），
+ * 三份实现迟早走散 —— 而且日历那一份必须换一种写法：它手上是**数字**的年月（year/month），
+ * 页面手上是 'YYYY-MM' 字符串。抽成一条，两边都调它。
+ *
+ * 月态两边都补零，按字符串比就够了（'2025-12' < '2026-10'）；年态直接比年。
+ *
+ * @param {{year: number, month?: number}} period 月态的 month 是 1..12
+ * @param {boolean} isYear
+ * @param {Date} now 只在断言里传，生产代码用当下
+ */
+export function canGoForward(period, isYear, now = new Date()) {
+  if (isYear) return period.year < now.getFullYear()
+  const p = (n) => String(n).padStart(2, '0')
+  return `${period.year}-${p(period.month)}` < `${now.getFullYear()}-${p(now.getMonth() + 1)}`
+}
+
+/**
  * 按天聚合：`{ 'YYYY-MM-DD': 合计 }`。
  *
  * 两个页面的数据形状不同（首页是"按天分好组的对象"、预付历史是"一堆带日期的行"），

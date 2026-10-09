@@ -271,16 +271,18 @@
 
 		<!-- 快速切换期间：**日历**（月态弹月历、年态弹年历）。
 		     期次胶囊 / 月年分段 / 账户筛选都没动 —— 这里只换了弹层里的内容，
-		     所以没有多出一套时间导航。格子上带当天的收支，它同时是选期器和分布视图 -->
+		     所以没有多出一套时间导航。格子上带当天的收支，它同时是选期器和分布视图。
+		     ★ 弹层里的 ›‹ 与页面上那对是同一件事（都走 shiftPeriod）：翻到哪期，
+		       底下的列表就跟着换到哪期，格子里的数因此永远是真的 -->
 		<view v-if="showPeriodPicker" class="af-scrim" :class="{ closing: ppClosing }" @click="closePeriodPicker">
 			<view class="af-blocker"></view>
 			<view class="af-card" :class="{ closing: ppClosing }" @click.stop>
 				<view class="af-grab"></view>
 				<period-calendar :mode="mode" :year="calYear" :month="calMonth" :today="todayStr"
-					:values="periodValues" @pick="onCalendarPick" />
+					:values="periodValues" @pick="onCalendarPick" @shift="shiftPeriod" />
 				<view class="af-btns">
 					<view class="af-cancel af-press" :class="{ pressing: isPressed('cancel') }" @touchstart="pressOn('cancel')"
-						@touchend="pressOff" @touchcancel="pressOff" @click="closePeriodPicker"><text>取消</text></view>
+						@touchend="pressOff" @touchcancel="pressOff" @click="closePeriodPicker"><text>关闭</text></view>
 				</view>
 			</view>
 		</view>
@@ -322,7 +324,7 @@
 	import tabSwipe from '@/services/tab-swipe.js'
 	import pressFx from '@/services/press.js'
 	import PeriodCalendar from '@/components/period-calendar/period-calendar.vue'
-	import { todayKey } from '@/services/calendar.js'
+	import { todayKey, canGoForward } from '@/services/calendar.js'
 	// 懒加载的切片逻辑（与分类明细页共用一份，可被 scripts/lazy-repro.mjs 覆盖）
 	import {
 		sliceGroups
@@ -482,12 +484,12 @@
 				for (const g of this.groups) out[g.key] = (g.income || 0) - (g.expense || 0)
 				return out
 			},
-			// 能不能往后翻：不允许切到「当天之后」（用户裁定）。'YYYY-MM'/年份用字符串比较即可
+			// 能不能往后翻：不允许切到「当天之后」（用户裁定）。实现在 services/calendar.js，
+			// 与日历弹层的 › 共用同一条 —— 弹层的 › 现在就是调这里的 shiftPeriod
 			canForward() {
-				const d = new Date()
-				const p = (n) => String(n).padStart(2, '0')
-				if (this.mode === 'year') return this.year < d.getFullYear()
-				return this.month < `${d.getFullYear()}-${p(d.getMonth() + 1)}`
+				if (this.mode === 'year') return canGoForward({ year: this.year }, true)
+				const [y, m] = this.month.split('-').map(Number)
+				return canGoForward({ year: y, month: m }, false)
 			},
 			// 储蓄率 = 100 − 支出率；恒两位小数（用户裁定：20% 也显示成 20.00%）
 			rateText() {

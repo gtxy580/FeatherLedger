@@ -1,6 +1,6 @@
 <template>
 	<view class="pc">
-		<!-- 标题行：箭头翻的是「正在看哪一期」，与首页期次胶囊同一套观感 -->
+		<!-- 标题行：箭头翻的就是页面这一期（弹层的 › 与页面的 › 是同一件事） -->
 		<view class="pc-head">
 			<view class="pc-chev" @click="shift(-1)">
 				<view :style="maskStyle('chevL', 34, 'var(--md-on-surface-variant)')"></view>
@@ -28,7 +28,9 @@
 </template>
 
 <script>
-import { monthCells, yearCells, cellAmount, isFuturePeriod, currentPeriod } from '@/services/calendar.js'
+import {
+	monthCells, yearCells, cellAmount, isFuturePeriod, currentPeriod, canGoForward
+} from '@/services/calendar.js'
 import { maskStyle } from '@/services/icons.js'
 
 // 周一起头是中文习惯（列对齐靠 grid 的等分，不靠这七个字的宽度）
@@ -38,40 +40,35 @@ export default {
 	name: 'period-calendar',
 	props: {
 		mode: { type: String, default: 'month' }, // 'month' | 'year'
+		// ★ 组件**不自持期间**：它画的永远是「页面当前那一期」。
+		//   箭头翻了页就把 delta 交给父级，父级换期、重查，再把新的 props 送回来 ——
+		//   于是格子和列表说的是同一期。（曾经把"正在看哪一期"存在组件自己身上，
+		//   结果是翻走之后 values 还是旧期间的键，整月空白。）
 		year: { type: Number, required: true },
 		month: { type: Number, default: 1 },
 		today: { type: String, default: '' },
 		values: { type: Object, default: () => ({}) }
 	},
 	data() {
-		return {
-			// 正在看哪一期。箭头翻的是它、不通知父级；点格子那一刻才 emit。
-			// 组件随弹层开关创建销毁（父级用 v-if），所以从 prop 初始化一次就够
-			viewYear: this.year,
-			viewMonth: this.month,
-			WEEK
-		}
+		return { WEEK }
 	},
 	computed: {
 		isYear() {
 			return this.mode === 'year'
 		},
 		title() {
-			return this.isYear ? `${this.viewYear}年` : `${this.viewYear}年${this.viewMonth}月`
+			return this.isYear ? `${this.year}年` : `${this.year}年${this.month}月`
 		},
-		// 不能翻到未来（与首页 › 置灰同一条裁定）
+		// 不能翻到未来（与两个页面的 › 置灰同一条裁定、同一个实现）
 		canForward() {
-			const d = new Date()
-			if (this.isYear) return this.viewYear < d.getFullYear()
-			return this.viewYear < d.getFullYear() ||
-				(this.viewYear === d.getFullYear() && this.viewMonth < d.getMonth() + 1)
+			return canGoForward({ year: this.year, month: this.month }, this.isYear)
 		},
 		/** 本月的 'YYYY-MM'：点格子时判「这一格是不是未来」用的 */
 		nowPeriod() {
 			return currentPeriod()
 		},
 		cells() {
-			const raw = this.isYear ? yearCells(this.viewYear) : monthCells(this.viewYear, this.viewMonth)
+			const raw = this.isYear ? yearCells(this.year) : monthCells(this.year, this.month)
 			return raw.map((c) => {
 				const v = Number(this.values[c.key]) || 0
 				return {
@@ -89,14 +86,9 @@ export default {
 		maskStyle,
 		shift(delta) {
 			if (delta > 0 && !this.canForward) return // 不往未来翻（箭头另有置灰）
-			if (this.isYear) {
-				this.viewYear += delta
-				return
-			}
-			// Date 会自动进位跨年（12 月 +1 → 次年 1 月；1 月 −1 → 上年 12 月）
-			const d = new Date(this.viewYear, this.viewMonth - 1 + delta, 1)
-			this.viewYear = d.getFullYear()
-			this.viewMonth = d.getMonth() + 1
+			// 交给父级去换期 —— 弹层里的箭头与页面上的 › 是**同一件事**，
+			// 走同一个 shiftPeriod（换期 + 重查）。所以翻到哪期，格子里的数就是哪期的
+			this.$emit('shift', delta)
 		},
 		pick(key) {
 			// ★ 未来的格子点不动（与 › 置灰同一条裁定）。月历**永远**带着下个月的那几格

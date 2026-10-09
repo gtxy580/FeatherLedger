@@ -94,16 +94,18 @@
       </scroll-view>
     </template>
 
-    <!-- 期间切换：日历（月态弹月历、年态弹年历）。这里原来是滚轮 -->
+    <!-- 期间切换：日历（月态弹月历、年态弹年历）。这里原来是滚轮。
+         ★ 弹层里的 ›‹ 与页面上那对是同一件事（都走 shiftPeriod）：翻到哪期，
+           底下的列表就跟着换到哪期，格子里的数因此永远是真的 -->
     <view v-if="showPicker" class="af-scrim" :class="{ closing: pkClosing }" @click="closePicker">
       <view class="af-blocker"></view>
       <view class="af-card" :class="{ closing: pkClosing }" @click.stop>
         <view class="af-grab"></view>
         <period-calendar :mode="mode" :year="calYear" :month="calMonth" :today="todayStr"
-          :values="periodValues" @pick="onCalendarPick" />
+          :values="periodValues" @pick="onCalendarPick" @shift="shiftPeriod" />
         <view class="af-btns">
           <view class="af-cancel af-press" :class="{ pressing: isPressed('pk') }" @touchstart="pressOn('pk')"
-            @touchend="pressOff" @touchcancel="pressOff" @click="closePicker"><text>取消</text></view>
+            @touchend="pressOff" @touchcancel="pressOff" @click="closePicker"><text>关闭</text></view>
         </view>
       </view>
     </view>
@@ -119,7 +121,7 @@ import { fmtYuan } from '@/services/format.js'
 import { maskStyle } from '@/services/icons.js'
 import pressFx from '@/services/press.js'
 import PeriodCalendar from '@/components/period-calendar/period-calendar.vue'
-import { sumByDay, todayKey } from '@/services/calendar.js'
+import { sumByDay, todayKey, canGoForward } from '@/services/calendar.js'
 
 // 列表懒加载：首屏只渲染这么多张卡，滚到底再补一批（与首页/分类明细同一套）
 const LAZY_ROWS = 60
@@ -201,12 +203,11 @@ export default {
       if (net === 0) return '刚好收平'
       return `${net > 0 ? '多收回' : '未收回'} ${fmtYuan(Math.abs(net))}`
     },
-    /** 已是最新一期（当年/当月）：右箭头置灰、也不能再往后翻（与首页同一判据） */
+    /** 已是最新一期（当年/当月）：右箭头置灰、也不能再往后翻（与首页同一判据、同一实现） */
     canForward() {
-      const d = new Date()
-      const p = (n) => String(n).padStart(2, '0')
-      if (this.mode === 'year') return this.year < d.getFullYear()
-      return this.month < `${d.getFullYear()}-${p(d.getMonth() + 1)}`
+      if (this.mode === 'year') return canGoForward({ year: this.year }, true)
+      const [y, m] = this.month.split('-').map(Number)
+      return canGoForward({ year: y, month: m }, false)
     },
     /** 当前粒度下的起止（含），也是查询用的范围 */
     range() {
