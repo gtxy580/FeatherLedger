@@ -112,6 +112,24 @@
           </view>
         </view>
 
+        <!-- 点按折线上的某天 → 这一行写清是哪天、本期多少、上期多少（用户裁定：放图上方一行）。
+             ★ 这一行**始终占位**（没选中时显示提示语）：不占位的话，点一下整块图往下跳，
+               手指抬起来会发现刚点的地方跑了 -->
+        <view class="sp-pick">
+          <template v-if="selPoint">
+            <text class="sp-pick-d">{{ selPoint.date }}</text>
+            <view class="sp-pick-cell">
+              <text class="sp-pick-k">{{ trendLabels[0] }}</text>
+              <text class="sp-pick-v num cur">{{ selPoint.cur }}</text>
+            </view>
+            <view class="sp-pick-cell">
+              <text class="sp-pick-k">{{ trendLabels[1] }}</text>
+              <text class="sp-pick-v num">{{ selPoint.prev }}</text>
+            </view>
+          </template>
+          <text v-else class="sp-pick-hint">点折线上的某天看金额</text>
+        </view>
+
         <!-- 绘图区：先量一次尺寸（px），折线才能算角度与长度；空态时叠一层提示 -->
         <view class="sp-chart">
           <!-- Y 轴：只标两档（中/顶），0 由下方基线代替；刻度线与数据点共用同一套顶部留白。
@@ -126,10 +144,20 @@
             <view id="sp-plot" class="sp-plot">
             <view class="sp-baseline"></view>
             <view v-for="(t, i) in yTicks" :key="'gl' + i" class="sp-grid" :style="{ bottom: t.bottom }"></view>
+            <!-- 选中那天的竖线：压在折线与点**下面**（先画它），位置与横轴刻度同一套算法，
+                 所以与那个点严格对齐 -->
+            <view v-if="selPoint" class="sp-guide" :style="{ left: tickLeft(selIndex) }"></view>
             <view v-for="(g, i) in chart.segs" :key="'g' + i" class="sp-seg" :style="g"></view>
-            <view v-for="(d, i) in chart.dots" :key="'d' + i" class="sp-dot" :style="d"></view>
+            <view v-for="(d, i) in chart.dots" :key="'d' + i" class="sp-dot" :class="{ sel: d.sel }" :style="d.style"></view>
             <view v-if="!trendHasData" class="sp-plot-empty">
               <text class="sp-empty-t">这段时间还没有记账</text>
+            </view>
+            <!-- 可点区：整块盖在绘图区上，flex 等分 —— 第 i 列就是第 i 个桶。
+                 ★ 点哪算哪靠"列"而不是靠算点击坐标；等分列与数据点的 x（i/(n-1)）不完全同点，
+                   但每个点必定落在自己那一列里（i/n < i/(n-1) ≤ (i+1)/n），点不错。
+                 ★ 空期间不铺（`trendHasData` 为假时没有数可读），也免得压住空态提示 -->
+            <view v-if="trendHasData" class="sp-hits">
+              <view v-for="(t, i) in trend" :key="'hit' + i" class="sp-hit" @click="pickTrend(i)"></view>
             </view>
             </view>
 
@@ -178,7 +206,7 @@
 <script>
 import { getCategoryStats, getTrendStats } from '@/services/record.js'
 import { foldToTop, flatSubRows, summarizePeriod } from '@/services/stats.js'
-import { fmtYuan, fmtPercent, fmtYuanShort, periodText } from '@/services/format.js'
+import { fmtYuan, fmtPercent, fmtYuanShort, periodText, pointLabel } from '@/services/format.js'
 import { maskStyle } from '@/services/icons.js'
 import pressFx from '@/services/press.js'
 
@@ -225,6 +253,8 @@ export default {
       cats: [], // getCategoryStats 的原始平铺行（两个层级共用）
       trend: [], // 本期：getTrendStats 的结果（桶已补全）
       prevTrend: [], // 上期：同一函数换一个范围再调一次
+      // 点按折线选中的桶下标（-1 = 没选）。★ 只可能在 trend 的范围内 —— 可点区就铺那么多列
+      selIndex: -1,
       // 期间摘要（本期/日均/较上期）。**在 load() 里算完存下来，不做 computed**：
       // range 是 computed（切粒度立刻变），而 trend 要等查询回来才换 —— 做成 computed
       // 就会在新期间的时长上除旧金额，切粒度时数字乱跳。存下来才能保证与数据同源。
@@ -400,6 +430,21 @@ export default {
       return this.trend.some((p) => p.amount > 0) || this.prevTrend.some((p) => p.amount > 0)
     },
     /**
+     * 点按选中的那一点，三个字段都在这儿拼好，模板只管摆。
+     * ★ 上期短于本期（上月 30 天 vs 本月 31 天）时，末尾几天没有上期数 —— 给「—」，
+     *   不是 0：0 是"那天没花钱"，而这几天上期压根不存在。
+     */
+    selPoint() {
+      const i = this.selIndex
+      if (i < 0 || !this.trend[i]) return null
+      const prev = this.prevTrend[i]
+      return {
+        date: pointLabel(this.gran, this.range.start, this.trend[i].label),
+        cur: fmtYuan(this.trend[i].amount),
+        prev: prev ? fmtYuan(prev.amount) : '—'
+      }
+    },
+    /**
      * 折线的线段与数据点。CSS 自绘折线：两点之间是一根细 view，用 rotate 摆到位。
      * 必须先把绘图区量成 px——角度与长度都需要真实尺寸（百分比给不出长度）。
      */
@@ -418,7 +463,12 @@ export default {
         s.data.forEach((p, i) => {
           const x = i * stepX
           const y = yOf(p.amount)
-          dots.push({ left: x + 'px', top: y + 'px', backgroundColor: s.color })
+          // ★ sel 单独放一层，不混进 style 对象里 —— 混进去的话这个键会被当成一条
+          //   CSS 属性写进内联样式（`sel:true`），是脏的
+          dots.push({
+            style: { left: x + 'px', top: y + 'px', backgroundColor: s.color },
+            sel: i === this.selIndex
+          })
           if (prev) {
             const dx = x - prev.x
             const dy = y - prev.y
@@ -599,6 +649,13 @@ export default {
         this.quickTimer = null
       }, 200)
     },
+    /**
+     * 点折线上的一列 = 选那一天；再点同一列 = 取消（用户裁定：点按显示金额）。
+     * ★ 没给它挂按压反馈：整列闪一下太吵，而且选中本身（竖线 + 上面那行数字）就是反馈。
+     */
+    pickTrend(i) {
+      this.selIndex = this.selIndex === i ? -1 : i
+    },
     /** 刻度与数据点用同一个 x：i / (n-1)，再平移半个字宽居中 */
     tickLeft(i) {
       const n = this.bucketCount
@@ -661,6 +718,8 @@ export default {
         this.cats = rows
         this.trend = trend
         this.prevTrend = prevTrend
+        // 数据换了，「点按选中」的那一点就没意义了（桶数都可能变）—— 一起清掉
+        this.selIndex = -1
         // 摘要与这批数据同源算出来（用**本次**的 start/end，不是 range —— 见 data 里 sum 的注释）
         this.sum = summarizePeriod({ trend, prevTrend, start, end, today: fmtDate(new Date()) })
         this.loadError = false
@@ -1025,6 +1084,51 @@ export default {
   min-width: 0;
 }
 
+/* 点按读出行：日期 + 本期 + 上期。
+   ★ 高度**写死**、始终占位 —— 选中前后不能变高，否则点一下整块图往下跳 */
+.sp-pick {
+  display: flex;
+  align-items: baseline;
+  gap: 28rpx;
+  height: 44rpx;
+  line-height: 44rpx;
+  margin-bottom: 8rpx;
+
+  .sp-pick-d {
+    font-size: 24rpx;
+    font-weight: 600;
+    color: var(--md-on-surface);
+  }
+
+  .sp-pick-cell {
+    display: flex;
+    align-items: baseline;
+    gap: 8rpx;
+  }
+
+  /* 名字用 trendLabels（本月/上月、本年/上年），与上面图例同一套说法 */
+  .sp-pick-k {
+    font-size: 22rpx;
+    color: var(--md-on-surface-variant);
+  }
+
+  .sp-pick-v {
+    font-size: 24rpx;
+    color: var(--md-on-surface);
+
+    /* 本期用本期线的色（主色深色，作文字够清楚）；
+       ★ 上期线的色（--md-outline-variant）是给细线用的、很淡，当**文字**读不清，所以这里不跟它 */
+    &.cur {
+      color: var(--md-primary-strong);
+    }
+  }
+
+  .sp-pick-hint {
+    font-size: 22rpx;
+    color: var(--md-on-surface-variant);
+  }
+}
+
 .sp-plot {
   position: relative;
   width: 100%;
@@ -1109,6 +1213,39 @@ export default {
   height: 8rpx;
   border-radius: 50%;
   transform: translate(-50%, -50%);
+
+  // 选中的那一点放大一圈（点本来只有 4px，不放大根本看不出选中了哪个）
+  &.sel {
+    width: 18rpx;
+    height: 18rpx;
+  }
+}
+
+/* 选中那天的竖线：从基线通到顶，位置与数据点同一套 x（tickLeft）。
+   压在折线与点下面（模板里先画），所以它不会盖住线 */
+.sp-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1rpx;
+  background: var(--md-primary-strong);
+  opacity: 0.45;
+  transform: translateX(-50%);
+}
+
+/* 可点区：整块盖在绘图区上、flex 等分（第 i 列 = 第 i 个桶）。
+   必须是绘图区里**最后**画的一层，否则收不到点击 */
+.sp-hits {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+
+  .sp-hit {
+    flex: 1;
+  }
 }
 
 .sp-plot-empty {

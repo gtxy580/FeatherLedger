@@ -232,3 +232,25 @@ export function periodText(gran, start) {
   if (gran === 'month') return `${y}年${m}月`
   return ''
 }
+
+/**
+ * 折线图上某一个点的日期文案 —— 点按后那一行左边那半。
+ *
+ * 月态给 '10月5日'（**月、日都不补零**，与 periodText 同一条：一行里放得下才是目的）；
+ * 年态的桶标签本来就是 'N月'，直接用。
+ *
+ * ★ 只要 label 与 start，不要整个趋势数据：这是纯文案，值得单独钉断言
+ *   （钉在 scripts/format-repro.mjs 的 pointLabel 那一组）。
+ *
+ * @param {'month'|'year'} gran 粒度
+ * @param {string} start 本期起算日 'YYYY-MM-DD'（月态只取它的月）
+ * @param {string} label 桶标签：月态是日号、年态是 'N月'
+ * @returns {string} 起算日不合法时返回空串（宁可少显示一段，也不抛给页面）
+ */
+export function pointLabel(gran, start, label) {
+  if (gran === 'year') return String(label)
+  const m = String(start || '').split('-')[1]
+  const mm = Number(m)
+  if (!Number.isFinite(mm)) return ''
+  return `${mm}月${Number(label)}日`
+}
