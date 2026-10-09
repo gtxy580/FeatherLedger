@@ -16,12 +16,15 @@
 			<text v-for="w in WEEK" :key="w" class="pc-wd">{{ w }}</text>
 		</view>
 
-		<!-- 格子：月态 7 列 × 6 行，年态 3 列 × 4 行 -->
+		<!-- 格子：月态 7 列（4~6 行，够用就少一行）、年态 3 列 × 4 行。
+		     每格里：日期自己占一个块，收/支两行挂在块下面（见 .pc-box 那段注释） -->
 		<view class="pc-grid" :class="mode" :style="gridStyle">
 			<view v-for="c in cells" :key="c.key" class="pc-cell"
 				:class="{ dim: !c.current, today: c.isToday, future: c.future, pressing: isPressed(c.key) }"
 				@touchstart="onCellDown(c)" @touchend="pressOff" @touchcancel="pressOff" @click="pick(c)">
-				<text class="pc-d">{{ c.label }}</text>
+				<view class="pc-box">
+					<text class="pc-d">{{ c.label }}</text>
+				</view>
 				<text class="pc-e num">{{ c.expenseText }}</text>
 				<text class="pc-i num">{{ c.incomeText }}</text>
 			</view>
@@ -190,24 +193,22 @@ export default {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	justify-content: center;
+	// ★ **不居中**：日期块永远贴在本格**顶部**，金额挂在它下面。
+	//   居中会让"只有支出"（2 行）和"收支都有"（3 行）的日子把日期挤到不同高度 ——
+	//   真机上看着每个日期都在飘（用户反馈：很不和谐）
+	justify-content: flex-start;
 	// ⚠ 104rpx 与 services/calendar.js 里的 CELL_H 是**同一个数**，改一个就要改另一个。
-	// 行数少了**不**长高：多出来的空间给行距（见 gridStyle），格子比例因此保持不变
+	// 行数少了**不**长高：多出来的空间给行距（见 gridStyle），格子比例因此保持不变。
+	// 里面装的是「日期块 52 + 两行金额 48」
 	min-height: 104rpx;
-	border-radius: 16rpx;
-	background: var(--md-surface-container);
-	// 按下反馈走的是换底（不是 .af-press 的缩放）——所以 transition 也得写在这儿：
-	// App.vue 那份 .af-press 只管 transform，挂上它反而会被页面样式整条盖掉。
-	// 0.08s 与 .af-press 同档：再慢就从"手感"变成"动画"了
-	transition: background-color 0.08s ease-out;
 
 	// 前后月的格子淡下去 —— 但**仍然可点**：点它就是翻月（见父级的 pick 处理）
 	&.dim {
 		opacity: 0.35;
 	}
 
-	// 今天：一圈描边。不用填充色，免得跟主题色抢眼
-	&.today {
+	// 今天：一圈描边（画在日期块上，不是整格）
+	&.today .pc-box {
 		box-shadow: inset 0 0 0 2rpx var(--md-primary);
 	}
 
@@ -218,19 +219,46 @@ export default {
 	// 同权重下后一条说了算
 	&.future {
 		opacity: 0.3;
-		background: transparent;
+
+		.pc-box {
+			background: transparent;
+		}
 	}
 
-	// 按住：底深一档（用主题里现成的那两档，不新造颜色）。
+	// 按住：日期块的底深一档（用主题里现成的那两档，不新造颜色）。
 	// ★ 只有**会跳**的格子会进这个态（见 onCellDown）—— 按下去变深、松手却什么都不发生，
-	//   比全程没反馈更糟。写在最后，免得被上面两条的 background 盖掉
-	&.pressing {
+	//   比全程没反馈更糟
+	&.pressing .pc-box {
 		background: var(--md-surface-container-highest);
 	}
 }
 
+/* 日期（月态）/ 月份（年态）**自己占一个格子**，边上是空白的金额行（用户裁定）——
+   于是不管那天有没有账、有几种账，日期都在同一个高度上。
+   只装一个日期，所以能比原来那一整格矮不少 */
+.pc-box {
+	width: 100%;
+	height: 52rpx;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 14rpx;
+	// 52（日期块）+ 4（这道缝）+ 48（两行金额）= 104，正好是 .pc-cell 的 min-height
+	margin-bottom: 4rpx;
+	background: var(--md-surface-container);
+	// 按下反馈走的是换底（不是 .af-press 的缩放）——所以 transition 也得写在这儿，
+	// 不靠 App.vue 那份 .af-press：它只管 transform，挂上反而会被页面样式整条盖掉。
+	// 0.08s 与 .af-press 同档：再慢就从"手感"变成"动画"了
+	transition: background-color 0.08s ease-out;
+}
+
 .pc-grid.year .pc-cell {
 	min-height: 132rpx;
+
+	// 年态的格子宽（3 列），日期块也高一点才不像条细缝
+	.pc-box {
+		height: 80rpx;
+	}
 }
 
 .pc-d {
