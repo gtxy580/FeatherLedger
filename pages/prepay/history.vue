@@ -54,10 +54,11 @@
       <!-- 高度交回 CSS（flex: 1 吃满剩余空间）；能不能滚由 scroll-y 说了算。
            ★ 别再往这里塞固定高度：锁成「测量那一瞬的内容高」的话，长按展开
              「取消结清」把卡片撑高，多出来的那段就直接被裁掉 -->
-      <!-- ★ scroll-with-animation 跟着「这一趟是哪种滚动」走（见 scrollAnimated）：
-           换期回顶要**瞬间**到位（用户裁定：不要滚动过程），滚到某天才有滚动过程 -->
+      <!-- ★ 这里**不挂 scroll-with-animation**：换期回顶、滚到某天，程序触发的滚动
+           一律**不要滚动过程**（用户裁定：「不管怎么切换都不要那个滚动过程，除非真的在
+           拖动页面」）。它是**滚动容器**的属性、不是每次调用的参数 —— 挂上就全都变动画了 -->
       <scroll-view v-else class="list-body" :scroll-y="listScrollable" :scroll-top="scrollTop"
-        :scroll-into-view="scrollIntoView" :scroll-with-animation="scrollAnimated" @scroll="onListScroll"
+        :scroll-into-view="scrollIntoView" @scroll="onListScroll"
         @scrolltolower="onListLower">
       <view class="list">
         <!-- 长按一张卡 → 它下面滑出「取消结清」（再长按 / 点别处收起）。
@@ -164,10 +165,6 @@ export default {
       // 滚到哪张卡（形如 'c-2026-10-09'）。★ 只在「点日历」时设，用户一动手指就清掉 ——
       // 不清的话，之后任何一次重渲染都会把列表拽回那天
       scrollIntoView: '',
-      // 这一趟滚动要不要动画：换期回顶 = 不要（用户裁定），「滚到某天」= 要。
-      // ★ scroll-with-animation 是**滚动容器**的属性、不是每次调用的参数，
-      //   所以只能按趟切换；切换与滚动指令分两个 tick（见 load / scrollToDay）
-      scrollAnimated: false,
     }
   },
   computed: {
@@ -347,14 +344,10 @@ export default {
           this.shownRows = LAZY_ROWS
           // 回到列表顶部。scroll-view 只在值**变化**时响应 —— 在 0 上再设 0 没用，
           // 先抖半像素（人眼看不出来）。
-          // ★ 这一趟要**瞬间**到位（用户裁定：不要滚动过程）：先关掉动画，下一个 tick 再抖
           // ★ 但紧接着要「滚到某天」的那一趟**不回顶**（opts.jumpToDay 就是那个信号）：
           //   回顶再滚下去，人看到的是先闪回顶部、再往下走一趟，多余且难看；
           //   而"滚到那天"本来就会把列表摆到那一天的卡片上
-          if (!opts.jumpToDay) {
-            this.scrollAnimated = false
-            this.$nextTick(() => { this.scrollTop = this.scrollTop === 0 ? 0.5 : 0 })
-          }
+          if (!opts.jumpToDay) this.scrollTop = this.scrollTop === 0 ? 0.5 : 0
         }
         this.loadError = false
       } catch (e) {
@@ -443,8 +436,6 @@ export default {
       }
       if (!hit) return // 那天没有结清记录：没有可滚的目标，指令也别留下
       if (rows > this.shownRows) this.shownRows = rows
-      // 「滚到那天」这一趟**要**滚动过程：动画才看得出来是"过去了"
-      this.scrollAnimated = true
       this.$nextTick(() => { this.scrollIntoView = 'c-' + dateKey })
     },
     /** 用户自己一滚，就清掉「滚到某天」的指令 */
