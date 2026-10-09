@@ -19,7 +19,7 @@
 		<!-- 格子：月态 7 列 × 6 行，年态 3 列 × 4 行 -->
 		<view class="pc-grid" :class="mode">
 			<view v-for="c in cells" :key="c.key" class="pc-cell" :class="{ dim: !c.current, today: c.isToday, future: c.future }"
-				@click="pick(c.key)">
+				@click="pick(c)">
 				<text class="pc-d">{{ c.label }}</text>
 				<text class="pc-a num" :class="{ inc: c.inc }">{{ c.amountText }}</text>
 			</view>
@@ -81,6 +81,10 @@ export default {
 					current: this.isYear ? true : c.inMonth, // 年态没有"前后月"这回事
 					isToday: !!this.today && c.key === this.today,
 					future: isFuture(c.key, this.nowKey), // 还没到：画得淡、且点不动
+					// 「背后有没有东西可看」——就是 values 里有没有这一格。
+					// ★ 净 0 的那天（收支正好相抵）也照样落一个键，所以照样点得动；
+					//   没流水的那天压根不会有键
+					hasData: Object.prototype.hasOwnProperty.call(this.values, c.key),
 					amountText: cellAmount(v),
 					inc: v > 0
 				}
@@ -95,14 +99,21 @@ export default {
 			// 走同一个 shiftPeriod（换期 + 重查）。所以翻到哪期，格子里的数就是哪期的
 			this.$emit('shift', delta)
 		},
-		pick(key) {
-			// ★ 还没到的格子点不动（与 › 置灰同一条裁定）。要拦的有两类：
-			//   ① 月历**永远**带着下个月那几格（42 − 本月天数 − 前面垫的 ≥ 5），
-			//      年历在当前年份里 12 个月都在 —— 不拦就一步跳进还没到的空期间；
-			//   ② 本月内**今天之后**的那几天 —— 点下去只会关掉弹层、什么也不跳。
-			//   拦在这里而不是两个页面各写一遍：裁定要只有一条，两页就不可能走散
-			if (isFuture(key, this.nowKey)) return
-			this.$emit('pick', key)
+		/**
+		 * 点了某一格。有两类格子点不动（都拦在这里，两个页面就不用各写一遍）：
+		 *
+		 * ① **还没到的**（与 › 置灰同一条裁定）：月历**永远**带着下个月那几格
+		 *    （42 − 本月天数 − 前面垫的 ≥ 5），年历在当前年份里 12 个月都在；还有本月内
+		 *    今天之后的那几天 —— 不拦就一步跳进还没到的空期间。
+		 * ② **当期里没有流水的那些天**（用户裁定：点了不跳转）—— 那天没账可看，跳过去
+		 *    也是空的，白把弹层关了。
+		 *    ★ 只拦**当期**的格子：前后月那几格的流水不在 values 里（那是别的期间的数据），
+		 *      而点它们本来就是"翻到那个月"的指令，不是"看那一天"，照旧放行。
+		 */
+		pick(c) {
+			if (c.future) return
+			if (!this.isYear && c.current && !c.hasData) return
+			this.$emit('pick', c.key)
 		}
 	}
 }

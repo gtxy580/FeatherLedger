@@ -121,7 +121,7 @@ import { fmtYuan } from '@/services/format.js'
 import { maskStyle } from '@/services/icons.js'
 import pressFx from '@/services/press.js'
 import PeriodCalendar from '@/components/period-calendar/period-calendar.vue'
-import { sumByDay, todayKey, canGoForward } from '@/services/calendar.js'
+import { sumByDay, todayKey, canGoForward, gridKeyOf } from '@/services/calendar.js'
 
 // 列表懒加载：首屏只渲染这么多张卡，滚到底再补一批（与首页/分类明细同一套）
 const LAZY_ROWS = 60
@@ -183,9 +183,11 @@ export default {
      *   它说的就是这个数（「未收回 X」）。口径不一致的话，卡片上的数和日历里的数会对不上。
      * ★ 同一天可能结清好几笔，所以靠 sumByDay **累加**。
      * ★ 用全量 items，不是 visibleItems（后者是懒加载切过的）。
+     * ★ 键按**格子**的形状走（gridKeyOf）：月态按天、年态按月。这条不能想当然 ——
+     *   之前一直按天累加，年态的格子问的是 'YYYY-MM'，整片空白且不报错。
      */
     periodValues() {
-      return sumByDay(this.items, (p) => p.date, (p) => p.remaining)
+      return sumByDay(this.items, (p) => gridKeyOf(p.date, this.mode === 'year'), (p) => p.remaining)
     },
     periodLabel() {
       if (this.mode === 'year') return `${this.year}年`

@@ -52,6 +52,17 @@ export function yearCells(year) {
 }
 
 /**
+ * 页面把「某一天的数」喂给日历时，该挂在哪把 key 上。
+ *
+ * ★ 必须与**格子的 key 同形**：月态按天（'YYYY-MM-DD'）、年态按月（'YYYY-MM'）。
+ *   两边不同形的后果是**整片空白** —— 键一辈子也配不上格子，而且一声不吭
+ *   （预付历史的年视图就这么空过一次：它按天累加，年态的格子却在问'YYYY-MM'）。
+ */
+export function gridKeyOf(date, isYear) {
+  return isYear ? String(date).slice(0, 7) : String(date)
+}
+
+/**
  * 格子里的短金额。格宽只有 ~80rpx，`-128.00` 放不下，所以**不能照用 fmtYuan**。
  *
  * 绝对值 < 1 万元 → 整数元（`-128` / `+80`）；≥ 1 万元 → 一位小数的「万」（`-1.3万`）。
