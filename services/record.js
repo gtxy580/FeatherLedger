@@ -606,7 +606,7 @@ export async function getCategoryStats({ type, start, end }) {
  * @param {string} p.end 止（含）'YYYY-MM-DD'
  * @param {number|null} [p.cid] 分类 id；null = 已删除分类（孤儿行）
  * @param {boolean} [p.includeSub] 是否连子分类一起（主分类视角才为 true）
- * @param {'day'|'month'} [p.groupBy] 分组粒度：周/月报按天，年报按月
+ * @param {'day'|'month'} [p.groupBy] 分组粒度：月报按天，年报按月
  * @param {number|null} [p.accountId] 本页自己的账户筛选；null = 全部账户
  * @returns {Promise<{groups: Array<{key, amount, count, records}>, total: number, count: number}>}
  *   金额均为分；groups 按时间倒序（SQL 已排好，Map 保持插入顺序）
@@ -808,8 +808,7 @@ async function groupRecords({ type, start, end, groupBy, accountId, where }) {
   return { groups, total, count: rows.length }
 }
 
-const GRANS = ['week', 'month', 'year']
-const WEEK_LABELS = ['一', '二', '三', '四', '五', '六', '日']
+const GRANS = ['month', 'year']
 
 const p2 = (n) => String(n).padStart(2, '0')
 const parseDate = (s) => {
@@ -828,24 +827,18 @@ const fmtDate = (dt) => `${dt.getFullYear()}-${p2(dt.getMonth() + 1)}-${p2(dt.ge
  * @param {1|2} p.type 1=支出 2=收入
  * @param {string} p.start 'YYYY-MM-DD'（含）
  * @param {string} p.end 'YYYY-MM-DD'（含）
- * @param {'week'|'month'|'year'} p.gran
+ * @param {'month'|'year'} p.gran
  * @returns {Promise<Array<{key: string, label: string, amount: number}>>} 按时间升序，桶已补全
  */
 export async function getTrendStats({ type, start, end, gran }) {
   if (type !== 1 && type !== 2) throw new Error('type 必须是 1(支出) 或 2(收入)')
   const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v)
   if (!isDate(start) || !isDate(end)) throw new Error('start/end 必须是 YYYY-MM-DD 格式')
-  if (!GRANS.includes(gran)) throw new Error('gran 必须是 week / month / year')
+  if (!GRANS.includes(gran)) throw new Error('gran 必须是 month / year')
 
   // 1. 先生成完整的桶（key 用于与查询结果对齐，label 用于显示）
   const buckets = []
-  if (gran === 'week') {
-    const d0 = parseDate(start)
-    for (let i = 0; i < 7; i++) {
-      const dt = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() + i)
-      buckets.push({ key: fmtDate(dt), label: WEEK_LABELS[i], amount: 0 })
-    }
-  } else if (gran === 'month') {
+  if (gran === 'month') {
     const d0 = parseDate(start)
     const d1 = parseDate(end)
     for (let dt = d0; dt <= d1; dt = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate() + 1)) {
@@ -858,7 +851,7 @@ export async function getTrendStats({ type, start, end, gran }) {
     }
   }
 
-  // 2. 查聚合（年报按月分桶；周/月按天分桶）。substr 只出现在投影与分组里，WHERE 仍走 date 范围
+  // 2. 查聚合（年报按月分桶；月报按天分桶）。substr 只出现在投影与分组里，WHERE 仍走 date 范围
   const keyExpr = gran === 'year' ? 'substr(r.date, 1, 7)' : 'r.date'
   const rows = await query(
     `SELECT ${keyExpr} AS k, SUM(r.amount) AS amount

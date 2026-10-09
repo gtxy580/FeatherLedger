@@ -145,7 +145,7 @@
       </view>
     </template>
     <!-- 快速切换期间：自绘滚轮（与首页/记一笔的滚轮同一套——picker-view 在页面内、样式可控；
-         年列止于今年、当年期列止于本月/本周，因此滚不出未来期间，与 › 的裁定一致） -->
+         年列止于今年、当年期列止于本月，因此滚不出未来期间，与 › 的裁定一致） -->
     <view v-if="quickOpen" class="af-scrim" :class="{ closing: quickClosing }" @click="closeQuick">
       <view class="af-blocker"></view>
       <view class="af-card" :class="{ closing: quickClosing }" @click.stop>
@@ -156,7 +156,7 @@
         <view class="pv-wrap">
           <view class="pv-capsule"></view>
           <picker-view class="pv-view sp-pv" :value="pvIndex" indicator-style="height: 88rpx;" @change="onPvChange">
-            <picker-view-column :class="gran === 'week' ? 'pv-col-narrow' : ''">
+            <picker-view-column>
               <view v-for="y in pvYears" :key="y" class="sp-pv-cell">{{ y }}年</view>
             </picker-view-column>
             <picker-view-column v-if="gran !== 'year'">
@@ -182,8 +182,9 @@ import { fmtYuan, fmtPercent, fmtYuanShort, periodText } from '@/services/format
 import { maskStyle } from '@/services/icons.js'
 import pressFx from '@/services/press.js'
 
+// 只有月/年 —— 周报已按用户要求去掉，连带那套 ISO 周历（周年/周序号/周→周一/某年多少周）
+// 一起删了；要看它们长什么样，翻 git 历史。
 const GRANS = [
-  { key: 'week', label: '周报' },
   { key: 'month', label: '月报' },
   { key: 'year', label: '年报' }
 ]
@@ -199,55 +200,10 @@ const fmtDate = (dt) => `${dt.getFullYear()}-${p2(dt.getMonth() + 1)}-${p2(dt.ge
 
 /**
  * 给定粒度与日期，返回该粒度的**期间起点**（'YYYY-MM-DD'）。
- * range 与 canForward 共用它——「本周的周一」这种算法如果写两遍，两处迟早会漂移，
+ * range 与 canForward 共用它——「本月的 1 号」这种算法如果写两遍，两处迟早会漂移，
  * 而漂移的表现是「按钮能点但切不过去」或「不该能点时能点」，都很难查。
  */
-/**
- * 本周的周四。ISO 的周序号与「周年」都由它推出——周四落在哪一年，这一周就属于哪一年。
- * 注意跨年：2025-12-29 属于 **2026 年**第 1 周——这是 ISO 的定义，不是笔误。
- */
-function isoThursday(d) {
-  const t = new Date(d.getFullYear(), d.getMonth(), d.getDate())
-  t.setDate(t.getDate() + 3 - ((t.getDay() + 6) % 7)) // 移到本周的周四
-  return t
-}
-
-/** ISO 8601 周序号（周一为一周之始，与本期「周一起始」的约定一致） */
-function isoWeekOf(d) {
-  const t = isoThursday(d)
-  const week1 = new Date(t.getFullYear(), 0, 4) // 该年 1 月 4 日必落在第 1 周
-  return 1 + Math.round(((t - week1) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7)
-}
-
-/** ISO 周所属的「周年」。滚轮的年列必须用它，不能用 d.getFullYear()（跨年那一周会算错一年） */
-function isoWeekYearOf(d) {
-  return isoThursday(d).getFullYear()
-}
-
-// 一周的紧凑区间（`2026.9.28-10.4`）原先在本文件里算，现已抽到 format.js 的 `periodText` ——
-// 「分类明细」页也要那段文案，而页面拿不到组件的内部函数。抬头标签与滚轮里的周选项现在都走它，
-// 仍然是同一份来源（断言钉在 scripts/format-repro.mjs 的 periodText 那一组）。
-
-/**
- * ISO 周 → 该周周一的 Date。反查的锚点是「1 月 4 日必落在第 1 周」——
- * 与 isoWeekOf 是同一套定义，两者必须互为逆运算（滚轮选第 N 周，锚点就该落在那一周的周一）。
- */
-function isoMondayOf(year, week) {
-  const jan4 = new Date(year, 0, 4)
-  const mondayOfWeek1 = new Date(year, 0, 4 - ((jan4.getDay() + 6) % 7))
-  return new Date(mondayOfWeek1.getFullYear(), mondayOfWeek1.getMonth(), mondayOfWeek1.getDate() + (week - 1) * 7)
-}
-
-/** 某 ISO 年有多少周（12 月 28 日必落在最后一周） */
-function weeksInIsoYear(year) {
-  return isoWeekOf(new Date(year, 11, 28))
-}
-
 function periodStartOf(gran, d) {
-  if (gran === 'week') {
-    const back = (d.getDay() + 6) % 7 // getDay() 里周日是 0，换算成「距周一的天数」
-    return fmtDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() - back))
-  }
   if (gran === 'month') return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-01`
   return `${d.getFullYear()}-01-01`
 }
@@ -258,9 +214,9 @@ export default {
   data() {
     return {
       GRANS,
-      gran: 'week', // 'week' | 'month' | 'year'
+      gran: 'month', // 'month' | 'year'（默认月报 —— 原先默认的周报已去掉）
       anchor: '', // 'YYYY-MM-DD'，期间锚点；onLoad 时置为今天
-      // 期间滚轮（与首页/记一笔的滚轮同一套）：年列 + 期列（月/周），年视图只有年列
+      // 期间滚轮（与首页/记一笔的滚轮同一套）：年列 + 月份列，年视图只有年列
       pvYears: [],
       pvUnits: [],
       pvIndex: [0],
@@ -293,18 +249,18 @@ export default {
     range() {
       return this.rangeOf(this.gran, this.anchor)
     },
-    /** 能不能往后翻：不允许切到「当天之后」（用户裁定） */
     /** 弹层标题跟着粒度走 */
     granLabel() {
-      return this.gran === 'week' ? '周' : this.gran === 'month' ? '月' : '年'
+      return this.gran === 'month' ? '月' : '年'
     },
+    /** 能不能往后翻：不允许切到「当天之后」（用户裁定） */
     canForward() {
       const { start } = this.range
       if (!start) return false
       // 期间起点都是 'YYYY-MM-DD'，字典序即时间序 → 直接比字符串即可
       return start < periodStartOf(this.gran, new Date())
     },
-    /** 期间标签：周为范围（同年同月压缩），月/年为单值 */
+    /** 期间标签：月/年都是单值（文案来自 format.js 的 periodText） */
     periodLabel() {
       return this.labelOf(this.gran, this.anchor)
     },
@@ -349,7 +305,7 @@ export default {
       return good ? 'good' : 'bad'
     },
     /**
-     * 趋势图例的两个期间名：本周/上周、本月/上月、本年/上年。
+     * 趋势图例的两个期间名：本月/上月、本年/上年。
      *
      * 与 sumLabels 同一套拼法（都从 granLabel 拼），**别在模板里写死** —— 写死的话
      * 切到「年报」，图例还写着「本期/上期」，跟上面那排期间标签对不上。
@@ -357,7 +313,7 @@ export default {
     trendLabels() {
       return [`本${this.granLabel}`, `上${this.granLabel}`]
     },
-    /** 三格的标签。跟着粒度走（本周/上周、本月/上月、本年/上年）—— 「本期/较上期」在年报里读着别扭 */
+    /** 三格的标签。跟着粒度走（本月/上月、本年/上年）—— 「本期/较上期」在年报里读着别扭 */
     sumLabels() {
       const dir = this.type === 1 ? '支出' : '收入'
       return [`本${this.granLabel}${dir}`, `日均${dir}`, `较上${this.granLabel}`]
@@ -423,15 +379,11 @@ export default {
     prevColor() {
       return 'var(--md-outline-variant)'
     },
-    /** 上一期的范围：周报=上周、月报=上月、年报=去年 */
+    /** 上一期的范围：月报=上月、年报=去年 */
     prevRange() {
       const { start } = this.range
       if (!start) return { start: '', end: '' }
       const s = parseDate(start)
-      if (this.gran === 'week') {
-        const ps = new Date(s.getFullYear(), s.getMonth(), s.getDate() - 7)
-        return { start: fmtDate(ps), end: fmtDate(new Date(ps.getFullYear(), ps.getMonth(), ps.getDate() + 6)) }
-      }
       if (this.gran === 'month') {
         const pm = new Date(s.getFullYear(), s.getMonth() - 1, 1)
         const last = new Date(pm.getFullYear(), pm.getMonth() + 1, 0).getDate()
@@ -498,7 +450,7 @@ export default {
     setGran(g) {
       if (this.gran === g) return
       this.gran = g
-      this.anchor = fmtDate(new Date()) // 切换粒度回到「当前」周/月/年（用户裁定）
+      this.anchor = fmtDate(new Date()) // 切换粒度回到「当前」月/年（用户裁定）
       this.load()
     },
     /** 量某个选择器的矩形（相对视口） */
@@ -549,13 +501,11 @@ export default {
         end: this.range.end
       })
     },
-    /** 前后翻页：锚点 ±1 个单位（周 ±7 天、月 ±1 月、年 ±1 年），Date 自动进位 */
+    /** 前后翻页：锚点 ±1 个单位（月 ±1 月、年 ±1 年），Date 自动进位 */
     shift(delta) {
       if (delta > 0 && !this.canForward) return // 已是最新一期：静默返回（按钮另有置灰）
       const d = parseDate(this.anchor)
-      if (this.gran === 'week') {
-        this.anchor = fmtDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta * 7))
-      } else if (this.gran === 'month') {
+      if (this.gran === 'month') {
         this.anchor = fmtDate(new Date(d.getFullYear(), d.getMonth() + delta, 1))
       } else {
         this.anchor = fmtDate(new Date(d.getFullYear() + delta, 0, 1))
@@ -567,10 +517,6 @@ export default {
       if (!anchor) return { start: '', end: '' }
       const d = parseDate(anchor)
       const start = periodStartOf(gran, d)
-      if (gran === 'week') {
-        const s = parseDate(start)
-        return { start, end: fmtDate(new Date(s.getFullYear(), s.getMonth(), s.getDate() + 6)) }
-      }
       if (gran === 'month') {
         // 月末用 new Date(y, m, 0).getDate()：闰年 2 月自动正确
         const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()
@@ -578,28 +524,23 @@ export default {
       }
       return { start, end: `${d.getFullYear()}-12-31` }
     },
-    /**
-     * 给定粒度与锚点，算期间标签。周为紧凑范围（`2026.9.28-10.4`），月/年为单值。
-     * @param {boolean} [withWeekNo] 周粒度下是否附「（第 N 周）」——快速切换列表用，顶部标签不用
-     */
-    labelOf(gran, anchor, withWeekNo) {
-      const { start, end } = this.rangeOf(gran, anchor)
+    /** 给定粒度与锚点，算期间标签（月/年都是单值） */
+    labelOf(gran, anchor) {
+      const { start } = this.rangeOf(gran, anchor)
       if (!start) return ''
-      const text = periodText(gran, start, end)
-      return withWeekNo && gran === 'week' ? `${text}（第${isoWeekOf(parseDate(start))}周）` : text
+      return periodText(gran, start)
     },
     // ---- 快速切换期间（点击期间标签弹出滚轮）----
     /**
-     * 打开滚轮：年列固定「今年 −10 ~ 今年」；期列（月/周）随年份收缩——
-     * 当年只到当月/本周，所以滚不出未来期间（与 › 按钮置灰同一条裁定）。
+     * 打开滚轮：年列固定「今年 −10 ~ 今年」；月份列随年份收缩——
+     * 当年只到当月，所以滚不出未来期间（与 › 按钮置灰同一条裁定）。
      */
     openQuick() {
       if (this.quickTimer) clearTimeout(this.quickTimer)
       this.quickClosing = false
       const now = new Date()
       const anchorDate = parseDate(this.anchor)
-      // 周视图的年要用「ISO 周年」：2025-12-29 属于 2026 年第 1 周，用日历年会算成上一年
-      const anchorYear = this.gran === 'week' ? isoWeekYearOf(anchorDate) : anchorDate.getFullYear()
+      const anchorYear = anchorDate.getFullYear()
       this.pvYears = []
       for (let y = now.getFullYear() - 10; y <= now.getFullYear(); y++) this.pvYears.push(y)
       const yi = Math.max(0, this.pvYears.indexOf(anchorYear))
@@ -610,28 +551,17 @@ export default {
       }
       this.quickOpen = true
     },
-    /** 当前锚点在期列里的下标（月 = 月份 − 1；周 = ISO 周 − 1） */
+    /** 当前锚点在期列里的下标（月份 − 1） */
     unitIndexOf(d) {
-      return this.gran === 'month' ? d.getMonth() : isoWeekOf(d) - 1
+      return d.getMonth()
     },
-    /** 期列随年份收缩：当年只到当月/本周（往年按 ISO 年长取周数） */
+    /** 期列随年份收缩：当年只到当月 */
     rebuildPvUnits() {
       const now = new Date()
       const y = this.pvYears[this.pvIndex[0]]
       this.pvUnits = []
-      if (this.gran === 'month') {
-        const maxM = y === now.getFullYear() ? now.getMonth() + 1 : 12
-        for (let m = 1; m <= maxM; m++) this.pvUnits.push({ v: m, label: `${m}月` })
-      } else {
-        // 周视图的「今年」也是 ISO 周年：否则跨年那一周会把未来的周放出来
-        const maxW = y === isoWeekYearOf(now) ? isoWeekOf(now) : weeksInIsoYear(y)
-        for (let w = 1; w <= maxW; w++) {
-          // 只写「第 N 周」看不出是哪几天（用户反馈）：把该周的日期段一并带上
-          const mon = isoMondayOf(y, w)
-          const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6)
-          this.pvUnits.push({ v: w, label: `第${w}周 ${periodText('week', fmtDate(mon), fmtDate(sun))}` })
-        }
-      }
+      const maxM = y === now.getFullYear() ? now.getMonth() + 1 : 12
+      for (let m = 1; m <= maxM; m++) this.pvUnits.push({ v: m, label: `${m}月` })
     },
     onPvChange(e) {
       const prevYi = this.pvIndex[0]
@@ -642,7 +572,7 @@ export default {
         this.pvIndex = [this.pvIndex[0], this.pvUnits.length - 1]
       }
     },
-    /** 确定：把「年 + 期」还原成期间锚点（周 → 那一周的周一），再重查 */
+    /** 确定：把「年 + 月」还原成期间锚点，再重查 */
     confirmPeriod() {
       const y = this.pvYears[this.pvIndex[0]]
       if (!y) return
@@ -651,7 +581,7 @@ export default {
       } else {
         const u = this.pvUnits[this.pvIndex[1]]
         if (!u) return
-        this.anchor = this.gran === 'month' ? `${y}-${p2(u.v)}-01` : fmtDate(isoMondayOf(y, u.v))
+        this.anchor = `${y}-${p2(u.v)}-01`
       }
       if (this.anchor === this.range.start) {
         this.closeQuick() // 已经是这一期，不必重查
@@ -690,24 +620,21 @@ export default {
     },
     /**
      * 横轴刻度抽稀。逐粒度的规则：
-     *   周报 —— 只有 7 桶，全留（周几的短标签放得下）。
      *   月报 —— 每 5 天一个（5/10/15/20/25），**25 号之后只留最后一天**：月末那几天
      *          与 25 号挨着排会叠字，而「当月最后一天」本身必须标出来（用户裁定）。
      *   年报 —— 12 个月的字样两两相邻会叠在一起（用户反馈 11 月与 12 月挤在一起），
      *          整段隔一个月标一次，落在**偶数月** 2/4/6/8/10/12。
      *          ★ 年报**不要**「首位必留」：那会额外多出一个 1 月，与 2 月又挨成一
-     *            对 —— 只是把右端的挤字挪到左端。所以首位豁免只给周/月。
+     *            对 —— 只是把右端的挤字挪到左端。
      */
     showTrendLabel(i) {
       const n = this.trend.length
       if (i === n - 1) return true // 末位必留（月报 = 当月最后一天）
       if (this.gran === 'year') return i % 2 === 1 // 奇数下标 = 偶数月
+      // 剩下的只有月报：首位必留（1 号），其余每 5 天一个
       if (i === 0) return true
-      if (this.gran === 'month') {
-        const day = i + 1
-        return day % 5 === 0 && day <= 25
-      }
-      return true
+      const day = i + 1
+      return day % 5 === 0 && day <= 25
     },
     /**
      * 供宿主动作触发的一次重载（本项目里是「我的」页的 onShow 调它）。
@@ -1152,13 +1079,6 @@ export default {
     color: var(--md-outline);
     white-space: nowrap;
   }
-}
-
-// 周视图的周选项长（「第40周 2026.9.28-10.4」）：年列窄一点，把宽度让给周列。
-// picker-view 的列默认等分宽度，两列各 50% 时周列会被挤得读不全。
-.pv-col-narrow {
-  width: 32%;
-  flex: 0 0 32%;
 }
 
 // 快速切换期间的滚轮（只定高；外观在 App.vue 的 .pv-* 里统一）

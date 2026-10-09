@@ -319,7 +319,7 @@
 			this.start = (query && query.start) || ''
 			this.end = (query && query.end) || ''
 			// 期间文案与占比条上那一个是同一份来源（format.js 的 periodText，断言在 format-repro）
-			this.periodLabel = periodText(this.gran, this.start, this.end)
+			this.periodLabel = periodText(this.gran, this.start)
 		},
 		onReady() {
 			this.measureList()

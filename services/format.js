@@ -209,7 +209,7 @@ export function catLabel(name, parentName, direct) {
 }
 
 /**
- * 期间文案：由「粒度 + 起止日」现算 —— '2026年10月' / '2026年' / '2026.9.28-10.4'。
+ * 期间文案：由「粒度 + 起算日」现算 —— '2026年10月' / '2026年'。
  *
  * 与 stats-panel 的 `labelOf(gran, anchor)` 产出的**是同一个字符串**（那处现在也走这里，
  * 所以只有这一个来源）。之所以要能「现算」：分类明细页原先靠 URL 把这段中文传给目标页，
@@ -217,23 +217,18 @@ export function catLabel(name, parentName, direct) {
  * 没有先例可参照）—— 页头于是显示成 %E5%B9%B4… 这类。改成从 ASCII 参数现算之后，
  * 这一类问题整体消失，不必再猜框架在每一端到底解不解码。
  *
- * 周报那一档跟日历一致：**同年省略尾部年份**（`2026.9.28-10.4`），跨年才补
- * （`2025.12.29-2026.1.4`）；月日**都不补零** —— 一行里放得下才是目的（用户裁定）。
+ * （原先还有一档「周报」，要 start + end 两个日期拼成 `2026.9.28-10.4`；周报去掉之后
+ *   那一档连同 `end` 参数一起删了 —— 月/年只从 start 就能推出来。）
  *
- * @param {'week'|'month'|'year'} gran 粒度
+ * @param {'month'|'year'} gran 粒度
  * @param {string} start 'YYYY-MM-DD'
- * @param {string} [end] 'YYYY-MM-DD'（周报要用；月/年只从 start 推）
- * @returns {string} 参数不齐全时返回空串（宁可少显示一行，也不抛给页面）
+ * @returns {string} 不认识的粒度或日期不合法时返回空串（宁可少显示一行，也不抛给页面）
  */
-export function periodText(gran, start, end) {
+export function periodText(gran, start) {
   const s = String(start || '').split('-').map(Number)
   if (s.length !== 3 || s.some((n) => !Number.isFinite(n))) return ''
-  const [y, m, d] = s
+  const [y, m] = s
   if (gran === 'year') return `${y}年`
   if (gran === 'month') return `${y}年${m}月`
-  if (gran !== 'week') return ''
-  const e = String(end || '').split('-').map(Number)
-  if (e.length !== 3 || e.some((n) => !Number.isFinite(n))) return ''
-  const head = `${y}.${m}.${d}`
-  return e[0] === y ? `${head}-${e[1]}.${e[2]}` : `${head}-${e[0]}.${e[1]}.${e[2]}`
+  return ''
 }
