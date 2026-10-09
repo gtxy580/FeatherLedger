@@ -1,10 +1,19 @@
 /**
  * services/record.js —— 记账业务
  */
-import { exec, query, esc, now } from './db.js'
+import { exec, query, esc, now, getAdjustCategoryIds } from './db.js'
 
 /** 单笔金额上限：99,999,999.99 元。超过它"元转分"会突破 JS 安全整数精度（2^53-1） */
 export const MAX_AMOUNT_CENTS = 9999999999
+
+/**
+ * 两个「差异调节」内部件的 id 列表（空数组 = 锚悬空）。
+ * 列表接口读**一次**、传给每一行的 toRec —— toRec 是同步的，塞在 for 里不能再 await。
+ */
+async function adjustIdList() {
+  const { out, in: inc } = await getAdjustCategoryIds()
+  return [out, inc].filter((n) => n != null)
+}
 
 /** 非关键路径：取自增 id，失败降级返回 0（INSERT 已成功，不能反报失败） */
 async function fetchLastId() {
@@ -21,13 +30,16 @@ async function fetchLastId() {
  * 新增/更新共用的载荷校验：两处必须同规，否则「编辑」会成为绕过金额上限的后门。
  * 必须 async：账户存在性要查库——页面层的账户列表可能还没加载完，或那个账户刚被别处删掉。
  */
-async function assertRecordPayload({ type, categoryId, accountId, toAccountId = null, amountCents, date, time = '' }) {
+async function assertRecordPayload({ type, categoryId, accountId, toAccountId = null, amountCents, date, time = '' }, { allowTransferCategory = false } = {}) {
   if (type !== 1 && type !== 2 && type !== 3) throw new Error('type 必须是 1(支出) / 2(收入) / 3(转账)')
   if (!Number.isInteger(accountId)) throw new Error('必须选择账户')
   const acc = await query(`SELECT id FROM accounts WHERE id = ${accountId}`)
   if (!acc.length) throw new Error('账户不存在')
   if (type === 3) {
-    if (categoryId != null) throw new Error('转账不能带分类')
+    // 「转账不能带分类」是**用户侧**的规矩（记一笔的转账页没有分类可挑）。预付那条转账反过来
+    // 必须带分类 —— 以后少收时那笔差额要落回它 —— 所以服务内部开一个口子（allowTransferCategory），
+    // 只有 services/prepay.js 会用。
+    if (categoryId != null && !allowTransferCategory) throw new Error('转账不能带分类')
     if (!Number.isInteger(toAccountId)) throw new Error('请选择转入账户')
     if (toAccountId === accountId) throw new Error('转入账户不能和转出账户是同一个')
     const to = await query(`SELECT id FROM accounts WHERE id = ${toAccountId}`)
@@ -55,15 +67,22 @@ async function assertRecordPayload({ type, categoryId, accountId, toAccountId = 
  * @param {string} [data.note] 备注
  * @returns {Promise<number>} 新记录 id（获取失败返回 0）
  */
-export async function addRecord({ type, categoryId = null, accountId, toAccountId = null, amountCents, date, time = '', note = '' }) {
+export async function addRecord({ type, categoryId = null, accountId, toAccountId = null, amountCents, date, time = '', note = '' }, opts = {}) {
   // 服务层兜底校验：不信任调用方（页面层另有体验校验）
-  await assertRecordPayload({ type, categoryId, accountId, toAccountId, amountCents, date, time })
+  await assertRecordPayload({ type, categoryId, accountId, toAccountId, amountCents, date, time }, opts)
 
   // ★ 空值必须写成**显式的 NULL 字面量**：mock 的字面量解析只认大写 NULL，
   //   把 JS 的 null 插值成小写 null 会被当成字符串 'null' 存进去，真机与脚本就此走散。
   const cat = categoryId == null ? 'NULL' : categoryId
   const to = toAccountId == null ? 'NULL' : toAccountId
-  const sql = `INSERT INTO records (type, account_id, to_account_id, category_id, amount, note, date, time, created_at) VALUES (${type}, ${accountId}, ${to}, ${cat}, ${amountCents}, ${esc(note)}, ${esc(date)}, ${esc(time)}, ${esc(now())})`
+  // opts 里的三个预付字段只有 services/prepay.js 会用（页面从不传）：
+  //   internal    内部搬运，都不进首页明细（记录是真的，余额照算）。
+  //               **1 = 收回时挪的**、**2 = 结清时挪的** —— 分开是因为「取消结清」要认准后者
+  //               删掉，而两者除了来路之外长得一模一样（同是 type 3、同挂 prepay_id）。
+  //   prepayId    指向「预付那条」，收回 / 差额 / 结清那几条靠它认领回原笔
+  //   prepayDone  预付那条自己：0 = 还挂着，1 = 已结清
+  const pid = opts.prepayId == null ? 'NULL' : opts.prepayId
+  const sql = `INSERT INTO records (type, account_id, to_account_id, category_id, amount, note, date, time, created_at, prepay_id, prepay_done, internal) VALUES (${type}, ${accountId}, ${to}, ${cat}, ${amountCents}, ${esc(note)}, ${esc(date)}, ${esc(time)}, ${esc(now())}, ${pid}, ${opts.prepayDone ? 1 : 0}, ${Number(opts.internal) || 0})`
   await exec(sql)
   return fetchLastId()
 }
@@ -74,7 +93,7 @@ export async function addRecord({ type, categoryId = null, accountId, toAccountI
  * 选子分类时的显示规则（`s.color || 父.color`）。首页若只取自己的 color，同一分类会
  * 在两页显示成两种颜色。
  */
-function toRec(r) {
+function toRec(r, adjustIds = null) {
   return {
     id: Number(r.id),
     type: Number(r.type),
@@ -85,6 +104,15 @@ function toRec(r) {
     accountId: r.accountId == null ? null : Number(r.accountId),
     toAccountId: r.toAccountId == null ? null : Number(r.toAccountId),
     transferId: r.transferId == null ? null : Number(r.transferId),
+    // 改余额产生的「调整」流水：**能删、不能编辑**（用户裁定）。金额与分类都是系统反推出来的，
+    // 手改一笔就破坏了「这笔调整让余额正好落到目标值」这个前提，而用户看不出账已经歪了。
+    // 判据只看 category_id 落在哪两个内部件上（adjustIds 由调用方查一次传进来，
+    // 不在这里 await —— toRec 是同步的，它被塞在 map/for 里）。
+    adjust: adjustIds != null && adjustIds.includes(Number(r.categoryId)),
+    // 分类 id 与预付归属原样带出：decorateRecord 判「这一行是不是预付 / 是不是结清出来的」
+    // 要用它们（见那边的注释）。判据都是纯数据，所以放在那个纯函数里算，不在这里预判。
+    categoryId: r.categoryId == null ? null : Number(r.categoryId),
+    prepayId: r.prepayId == null ? null : Number(r.prepayId),
     categoryName: r.category_name || '',
     categoryIcon: r.category_icon || '',
     categoryColor: r.category_color || r.parent_color || '',
@@ -118,8 +146,22 @@ export function decorateRecord(r, opts = {}) {
   //   这里曾经只返回装饰字段，后果是静默的、且脚本测不到（页面在 .vue 里）：
   //   首页每一行金额都显示 0.00（fmtYuan(undefined) 给 "0.00"）、点编辑会以**新增态**
   //   打开（id=undefined → NaN）、删除永远失败、手续费行的按钮抑制失效。
-  const base = { ...r }
-  if (Number(r.type) === 3) {
+  // ★ 预付那一笔（支出账户 → 预付账户的转账）：底层是转账（所以不进支出统计、账户余额天然
+  //   正确），但**列表里要按支出显示**（用户裁定）—— 用户看到的是「我垫出去 1000（差旅）」，
+  //   不是「微信 → 预付账户」。
+  //   判据是 type 3 且带分类：只有预付会这么记（用户在记一笔里记转账选不到分类，
+  //   见 assertRecordPayload 的 allowTransferCategory）。
+  //   ★ 在这里算、而不是从 toRec 带过来：本函数是「给一行就能渲染」的纯函数（它自己的文档
+  //     就是这么写的），依赖上游算好的字段会让每个调用点都得先过 toRec。
+  const isPrepay = Number(r.type) === 3 && r.categoryId != null
+  // ★ 结清（少收）时补记的那笔支出、以及收回多收时记的那笔收入 —— 它们都挂着 prepay_id，
+  //   是这笔预付**走完之后留下的**收支。行上标一个「结清」，用户才知道这 200 块的支出是哪来的
+  //   （否则它看起来就像一笔凭空的差旅支出）。
+  //   （收回 / 结清时那两笔内部转账是 type 3 且 internal，本来就不进列表，走不到这里。）
+  const isSettled = r.prepayId != null && (Number(r.type) === 1 || Number(r.type) === 2)
+  const base = { ...r, prepay: isPrepay, settled: isSettled }
+  // 让开这一个分支，下面整段（图标取分类、减号、时刻 | 账户 · 分类）原样复用，两条路不会走散
+  if (Number(r.type) === 3 && !isPrepay) {
     // 转出账户是「这笔钱从哪出」的语境，所以图标取它；账户对就是这一行的身份，
     // 不能被备注顶掉（备注降到副标题）。
     // 副标题与收支行同一套：时刻在最前，备注跟在后面（用户裁定：时间|账户·分类）
@@ -166,8 +208,20 @@ export function decorateRecord(r, opts = {}) {
 // 联查：分类（子分类带父色兜底）+ 两端账户（转账那一行要显示「现金 → 银行卡」）。
 // ⚠ 每个投影**必须起别名**：mock 把 `别名.列` 拍平成一个键，`c.name` 与 `fa.name`
 //   不起别名会互相覆盖，真机上也会让 rs 对象的键变得不可预期。
+/**
+ * 流水行 + 联查（分类 / 父分类 / 转出账户 / 转入账户）。
+ *
+ * ⚠ 用它的查询**不要在 WHERE 里写 `r.type = X`**：records 与 categories **都有 type 列**，
+ *   而内存 mock 的 WHERE 是在「各表列拍平之后」求值的（Object.assign 合并，后一张表覆盖前一张），
+ *   `r.type` 会取到**分类的** type，整行被滤掉 —— 真机上却完全正确。
+ *   （2026-10-09 在 services/prepay.js 的待回收列表上踩过一次，现象是「查出来 0 条」。）
+ *   groupRecords 里那条 `r.type = ${type}` 恰好总是对的（按分类筛时两个 type 恒等），
+ *   但那是巧合不是保证。要按 type 筛，就另起一条**不 JOIN** 的查询。
+ *   同理：accounts 与 categories 都有 name / icon / color，拍平后也会互相覆盖。
+ */
 const REC_SELECT = `SELECT r.id, r.type, r.amount, r.note, r.date, r.time,
       r.account_id AS accountId, r.to_account_id AS toAccountId, r.transfer_id AS transferId,
+      r.category_id AS categoryId, r.prepay_id AS prepayId,
       c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
       p.name AS parent_name, p.color AS parent_color,
       fa.name AS from_name, fa.icon AS from_icon, fa.color AS from_color,
@@ -203,6 +257,14 @@ function accountWhere(accountId, prefix = '') {
 
 /**
  * 取某月数据：月汇总 + 按天分组的明细行
+ *
+ * ★ 明细里滤掉两类（见 services/prepay.js）：
+ *   - `internal = 1` 的内部搬运（预付收回 / 结清时的转账）：记录必须留着（余额靠流水算），
+ *     但用户不该在明细里看见钱在自己账户间挪。
+ *   - `prepay_done = 1` 的**已结清预付**：那笔垫付已经走完一生（钱要不回来、要不成了支出），
+ *     留在列表里只会是一条再也不会有下文的旧账 —— 它搬进「预付历史」里去了。
+ *     ★ 结清时补记的那笔支出**不隐藏**：那是真花掉的钱，统计和明细都该有它。
+ *   汇总不用另做处理 —— 两类都是 type = 3，本来就不进收支。
  * @param {string} month 'YYYY-MM'
  * @param {number|null} [accountId] 只算该账户（首页筛选）；null/省略 = 全部账户
  * @returns {Promise<{income: number, expense: number, days: Array}>} 金额均为分
@@ -227,14 +289,17 @@ export async function getMonthlyData(month, accountId = null) {
   const rows = await query(
     `${REC_SELECT}
     WHERE r.date >= ${esc(first)} AND r.date <= ${esc(last)}${accountWhere(accountId, 'r.')}
+      AND (r.internal IS NULL OR r.internal = 0)
+      AND (r.prepay_done IS NULL OR r.prepay_done = 0)
     ORDER BY r.date DESC, r.time DESC, r.created_at DESC, r.id DESC`
   )
 
   // SQL 已按日期倒序，Map 保持插入顺序 → days 天然倒序
   const days = []
   const byDate = new Map()
+  const adjustIds = await adjustIdList()
   for (const raw of rows) {
-    const rec = toRec(raw)
+    const rec = toRec(raw, adjustIds)
     let day = byDate.get(rec.date)
     if (!day) {
       day = { date: rec.date, income: 0, expense: 0, records: [] }
@@ -276,13 +341,16 @@ export async function getYearlyData(year, accountId = null) {
   const rows = await query(
     `${REC_SELECT}
     WHERE r.date >= ${esc(first)} AND r.date <= ${esc(last)}${accountWhere(accountId, 'r.')}
+      AND (r.internal IS NULL OR r.internal = 0)
+      AND (r.prepay_done IS NULL OR r.prepay_done = 0)
     ORDER BY r.date DESC, r.time DESC, r.created_at DESC, r.id DESC`
   )
 
   const months = []
   const byMonth = new Map()
+  const adjustIds = await adjustIdList()
   for (const raw of rows) {
-    const rec = toRec(raw)
+    const rec = toRec(raw, adjustIds)
     const key = rec.date.slice(0, 7)
     let m = byMonth.get(key)
     if (!m) {
@@ -357,16 +425,25 @@ export async function getRecord(id) {
  * @param {number} id
  * @param {Object} data 同 addRecord 的载荷
  */
-export async function updateRecord(id, { type, categoryId = null, accountId, toAccountId = null, amountCents, date, time = '', note = '' }) {
+export async function updateRecord(id, { type, categoryId = null, accountId, toAccountId = null, amountCents, date, time = '', note = '' }, opts = {}) {
   if (!Number.isInteger(id)) throw new Error('无效的流水 id')
-  const [exists] = await query(`SELECT id, type, transfer_id AS transferId FROM records WHERE id = ${id}`)
+  const [exists] = await query(`SELECT id, type, transfer_id AS transferId, category_id AS categoryId FROM records WHERE id = ${id}`)
   if (!exists) throw new Error('流水不存在')
   // ★ 手续费行不许单独改：它完全由所属的那条转账决定。单独改会把它变成一条挂着悬空
   //   transfer_id 的普通支出；更糟的是用户改完再去编辑那条转账，它又会被同步覆盖回来
   //  （「我改了它怎么又变回去了」）。要改手续费就改它所属的转账。
   if (exists.transferId != null) throw new Error('手续费随转账一起改，不能单独编辑')
+  // ★ 调整流水（「差异调节」）也不许改，**但可以删**（用户裁定）：它的金额与分类是改余额时
+  //   反推出来的，手改一笔就破坏了「这笔调整让余额正好落到目标值」这个前提 —— 而余额是用
+  //   流水算出来的，用户改完只会看到余额莫名其妙地不对，却找不到是谁动了它。
+  //   入口在页面上已经收掉了，这里再拦一道：页面漏了、或者将来多一条路径，都不会破坏它。
+  if ((await adjustIdList()).includes(Number(exists.categoryId))) {
+    throw new Error('余额调整记录不能编辑，可以删除')
+  }
 
-  await assertRecordPayload({ type, categoryId, accountId, toAccountId, amountCents, date, time })
+  // opts 透传：`allowTransferCategory` 只有 services/prepay.js 会用（改一笔预付时，
+  // 那条转账得继续带着分类）
+  await assertRecordPayload({ type, categoryId, accountId, toAccountId, amountCents, date, time }, opts)
 
   // 一条曾经是转账的记录被改成收支：把它那笔手续费行删掉，
   // 否则会留下一条无主的孤儿支出（钱凭空少了 2 元而没有任何东西解释它）
@@ -383,7 +460,7 @@ export async function updateRecord(id, { type, categoryId = null, accountId, toA
 }
 
 /**
- * 「手续费」分类的 id —— 读 meta.feeCategoryId（身份锚，与 meta.defaultAccountId 同一套路）。
+ * 「手续费」分类的 id —— 读 meta.feeCategoryId（身份锚，按 id 不按名字）。
  *
  * 锚悬空（用户把那个分类删了）时返回 null：那笔手续费就挂个空分类，在明细与分类占比里
  * 显示成「已删除分类」。这与 deleteCategory「不碰 records、联查不到就显示已删除分类」的
@@ -705,14 +782,16 @@ async function groupRecords({ type, start, end, groupBy, accountId, where }) {
   const rows = await query(
     `${REC_SELECT}
     WHERE r.type = ${type} AND r.date >= ${esc(start)} AND r.date <= ${esc(end)} AND ${where}${accountWhere(accountId, 'r.')}
+      AND (r.internal IS NULL OR r.internal = 0)
     ORDER BY r.date DESC, r.time DESC, r.created_at DESC, r.id DESC`
   )
 
   const groups = []
   const byKey = new Map()
   let total = 0
+  const adjustIds = await adjustIdList()
   for (const raw of rows) {
-    const rec = toRec(raw)
+    const rec = toRec(raw, adjustIds)
     const key = groupBy === 'month' ? rec.date.slice(0, 7) : rec.date
     let g = byKey.get(key)
     if (!g) {

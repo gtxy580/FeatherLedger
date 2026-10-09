@@ -44,8 +44,22 @@
 				</view>
 			</view>
 
-			<!-- 分组列表：年粒度按月分组（与首页年报同规），周/月粒度按天 -->
-			<view v-for="g in groups" :key="g.key" class="group">
+			<!-- 空态**不进滚动区**（理由见 prepay.vue）：整个剩余高度都归它，也不该能滚 -->
+			<view v-if="groups.length === 0" class="empty">
+				<text class="empty-icon">🐦</text>
+				<text class="empty-text">{{ emptyText }}</text>
+			</view>
+
+			<!-- **只有这一块滚**（页头固定）。到底由 scroll-view 的 scrolltolower 触发 ——
+			     整页不再滚动，页面的 onReachBottom 就永远等不到了 -->
+			<scroll-view v-else class="list-body" :scroll-y="listScrollable" :scroll-top="scrollTop"
+				@scrolltolower="onListLower">
+			<!-- 包裹层：measureList() 靠它量「内容总高」（列表顶层是多个 .group，
+			     没有统一的父节点就只能去猜最后一个是谁） -->
+			<view class="list-inner">
+			<!-- 分组列表：年粒度按月分组（与首页年报同规），周/月粒度按天。
+			     走 visibleGroups（懒加载切出来的那一段），不是 groups -->
+			<view v-for="g in visibleGroups" :key="g.key" class="group">
 				<view class="group-head">
 					<text class="g-label">{{ g.label }}</text>
 					<view class="g-sub num">
@@ -57,13 +71,21 @@
 					@touchend="onRowPressEnd" @touchcancel="onRowPressEnd">
 					<category-icon :icon="r.iconKey" :color="r.iconColor" :name="r.iconName" :size="80" />
 					<view class="txt">
-						<text class="t">{{ r.mainTitle }}</text>
+						<!-- 标题 + 「预付」标识同一行（与首页同规，理由见 index.vue） -->
+						<view class="t-row">
+							<text class="t">{{ r.mainTitle }}</text>
+							<text v-if="r.prepay" class="pre-tag">预付</text>
+							<text v-if="r.settled" class="settled-tag">结清</text>
+						</view>
 						<text v-if="r.subTitle" class="sub">{{ r.subTitle }}</text>
 					</view>
 					<text class="amt num" :class="r.amountClass">{{ r.sign }}{{ fmtYuan(r.amount) }}</text>
 					<!-- 手续费行（transferId 非空）不给编辑/删除：它完全由所属转账决定（与首页同规） -->
-					<view v-if="actsAlive && r.transferId == null" class="acts" :class="{ closing: actsClosing }">
-						<view class="act act-edit" @click.stop="onEditTap(r)">
+					<!-- 调整流水（r.adjust）不给编辑、要给删除；编辑按钮整枚不渲染，
+					     剩下的一枚删除因此居中（与首页同规，理由见 index.vue） -->
+					<!-- 结清流水（r.settled）也不给编辑/删除：与所属那笔预付是一体的（与首页同规） -->
+					<view v-if="actsAlive && r.transferId == null && !r.settled" class="acts" :class="{ closing: actsClosing }">
+						<view v-if="!r.adjust" class="act act-edit" @click.stop="onEditTap(r)">
 							<view :style="maskStyle('pencil', 30, 'var(--md-primary)')"></view>
 						</view>
 						<view class="act act-del" @click.stop="onDelete(r)">
@@ -73,16 +95,14 @@
 				</view>
 			</view>
 
-			<view v-if="groups.length === 0" class="empty">
-				<text class="empty-icon">🐦</text>
-				<text class="empty-text">{{ emptyText }}</text>
-			</view>
-
+			<!-- 还有没渲染出来的就先别说「到头了」—— 滚到底自动补一批（onReachBottom） -->
 			<view v-if="groups.length" class="list-end">
-				<text>没有更多了</text>
+				<text>{{ hasMore ? '上拉加载更多' : '没有更多了' }}</text>
 			</view>
 
 			<view class="foot-pad"></view>
+			</view>
+			</scroll-view>
 		</template>
 
 		<!-- 账户筛选：底部卡片（与首页同一套） -->
@@ -92,24 +112,33 @@
 				<view class="af-grab"></view>
 				<text class="af-title">账户筛选</text>
 				<view class="ap-list">
-					<!-- 「全部账户」不显示收支（用户裁定，与首页一致） -->
+					<!-- 「全部账户」不显示本期收支（用户裁定，与首页一致）；余额那一格例外 ——
+					     它显示总资产。理由同首页：这一屏开始看余额了，「一共多少」是最自然的一个数。 -->
 					<view class="ap-item all" :class="{ on: accountId == null }" @click="pickAccount(null)">
-						<text class="ap-name">全部账户</text>
-						<view v-if="accountId == null" class="ap-check" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
-						<view class="ap-gap"></view>
+						<view class="ap-mid">
+							<view class="ap-top">
+								<text class="ap-name">全部账户</text>
+								<text class="ap-bal num" :class="{ neg: totalBalance < 0 }">余额 {{ fmtYuan(totalBalance) }}</text>
+							</view>
+						</view>
+						<view class="ap-check" :class="{ off: accountId != null }" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
 					</view>
+					<!-- 这份列表里没有预付账户（listAccounts 滤掉了，服务层是唯一真源） -->
 					<view v-for="a in accounts" :key="a.id" class="ap-item" :class="{ on: a.id === accountId }"
 						@click="pickAccount(a.id)">
 						<category-icon :icon="a.icon" :color="a.color" :name="a.name" :size="56" />
 						<view class="ap-mid">
-							<text class="ap-name">{{ a.name }}</text>
+							<!-- 名字行两端：左账户名、右余额（累计到今天）；下面一行的「支 / 收」是本期的 -->
+							<view class="ap-top">
+								<text class="ap-name">{{ a.name }}</text>
+								<text class="ap-bal num" :class="{ neg: a.balance < 0 }">余额 {{ fmtYuan(a.balance) }}</text>
+							</view>
 							<view class="ap-nums num">
 								<text>支 {{ fmtYuan(acctOf(a.id).expense) }}</text>
 								<text class="inc">收 {{ fmtYuan(acctOf(a.id).income) }}</text>
 							</view>
 						</view>
-						<view class="ap-gap"></view>
-						<view v-if="a.id === accountId" class="ap-check" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
+						<view class="ap-check" :class="{ off: a.id !== accountId }" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
 					</view>
 				</view>
 				<view class="af-btns">
@@ -144,11 +173,17 @@
 		catLabel
 	} from '@/services/format.js'
 	import pressFx from '@/services/press.js'
+	// 懒加载的切片逻辑（与首页共用一份，可被 scripts/lazy-repro.mjs 覆盖）
+	import {
+		sliceGroups
+	} from '@/services/lazy.js'
 
 	// 与首页同一组常量（同一个手势在两个页面应当是同一个手感）
 	const LONG_PRESS_MS = 450
 	const MOVE_TOLERANCE = 8
 	const ACTS_OUT_MS = 180
+	// 流水列表懒加载：首屏只渲染这么多行，滚到底再补一批（与首页同一套，理由见 index.vue）
+	const LAZY_ROWS = 60
 
 	export default {
 		mixins: [pressFx],
@@ -169,6 +204,14 @@
 				groups: [],
 				total: 0,
 				totalCount: 0,
+				// 懒加载：渲染到第几行（切出来的是 visibleGroups）+ 上次 load 的指纹（见 load()）
+				shownRows: LAZY_ROWS,
+				loadKey: '',
+				// 列表滚动位置（只用来「换账户回到顶部」；用户自己滚不会回写这里）
+				scrollTop: 0,
+				// 这一块能不能滚：由 measureList() 按「内容是否真的超过可用高度」决定
+				// （卷不动的那套高度账见 index.vue 的同名方法注释）
+				listScrollable: false,
 				loadError: false,
 				loadToken: 0,
 				// 账户筛选
@@ -193,13 +236,41 @@
 			}
 		},
 		computed: {
+			/**
+			 * 各账户余额合计 —— 「全部账户」那一行右端显示的。
+			 *
+			 * ★ 与 services/account.js 的 `getTotalAssets()` 是同一个算法（那边就是
+			 *   `listAccounts()` 求和），而这一页手上已经有那份列表了，所以直接算，
+			 *   不再多查一次库。口径不会走散 —— 两边求的都是同一个 `balance` 字段。
+			 */
+			totalBalance() {
+				return this.accounts.reduce((n, a) => n + a.balance, 0)
+			},
+			/**
+			 * 懒加载切出来的那一段（与首页同规，理由见 index.vue）。
+			 * 纯函数在 services/lazy.js —— 两页共用一份。
+			 */
+			lazySlice() {
+				return sliceGroups(this.groups, this.shownRows)
+			},
+			// 模板真正 v-for 的就是它，不是 groups
+			visibleGroups() {
+				return this.lazySlice.groups
+			},
+			// 还有没渲染出来的（滚到底要不要继续补）
+			hasMore() {
+				return this.lazySlice.more
+			},
 			isExpense() {
 				return !this.income
 			},
+			// 未筛 = 「全部账户」（用户裁定：写全）。与首页那一份同一个词 —— 两页的按钮
+			// 都是「从这一期里筛出某个账户」，文案不该一处两字、一处四字。
 			accountName() {
 				const a = this.accounts.find((x) => x.id === this.accountId)
-				return a ? a.name : '全部'
+				return a ? a.name : '全部账户'
 			},
+			// 筛选弹层里列出来的账户就是 this.accounts（预付账户由 listAccounts 滤掉）
 			/** 空态要把「哪一期、哪个分类、筛没筛账户」说清楚 —— 否则用户不知道是没数据还是筛错了 */
 			emptyText() {
 				const kind = this.isExpense ? '支出' : '收入'
@@ -226,6 +297,13 @@
 						this.actsClosing = false
 					}, ACTS_OUT_MS)
 				}
+			},
+			// 列表内容变了就重量一次（与首页同规）
+			'groups.length'() {
+				this.$nextTick(this.measureList)
+			},
+			shownRows() {
+				this.$nextTick(this.measureList)
 			}
 		},
 		onLoad(query) {
@@ -242,6 +320,9 @@
 			this.end = (query && query.end) || ''
 			// 期间文案与占比条上那一个是同一份来源（format.js 的 periodText，断言在 format-repro）
 			this.periodLabel = periodText(this.gran, this.start, this.end)
+		},
+		onReady() {
+			this.measureList()
 		},
 		// 从记一笔编辑返回时要重查（同一 Tab 页式的复用不存在，但编辑/删除后回来必须看到新数）
 		onShow() {
@@ -266,6 +347,28 @@
 			return false
 		},
 		methods: {
+			/** 列表滚到底：懒加载的门槛再抬一批（与首页同规；触发者是 scroll-view 的 scrolltolower） */
+			onListLower() {
+				if (!this.hasMore) return
+				this.shownRows += LAZY_ROWS
+			},
+			/**
+			 * 量出列表内容有没有超过可用高度，据此决定这一块能不能滚（与首页同一套，
+			 * 为什么不让 CSS 算、为什么要锁 scroll-y 而不锁高度，见 index.vue 那条注释）。
+			 */
+			measureList() {
+				const q = uni.createSelectorQuery().in(this)
+				q.select('.list-body').boundingClientRect()
+				q.select('.list-inner').boundingClientRect()
+				q.exec((res) => {
+					const b = res && res[0]
+					const inner = res && res[1]
+					if (!b) return // 空态时这一块不存在，本来也不需要滚
+					const avail = Math.max(0, uni.getSystemInfoSync().windowHeight - b.top)
+					const content = inner ? inner.height : 0
+					this.listScrollable = content > avail + 1 // +1 容差躲浮点
+				})
+			},
 			maskStyle,
 			fmtYuan,
 			goBack() {
@@ -351,6 +454,16 @@
 					// 页头的合计与列表**同一次查询**算出来 —— 显示的那个数就是列表加起来那个数
 					this.total = data.total
 					this.totalCount = data.count
+					// 懒加载进度：换了账户（或任何筛选）才收回首屏；onShow 的同一筛选重查保留
+					// 用户已经滚出来的那些行（与首页同规，理由见 index.vue）
+					const key = `${this.cid}|${this.includeSub}|${this.income}|${this.gran}|${this.start}|${this.end}|${this.accountId}`
+					if (key !== this.loadKey) {
+						this.loadKey = key
+						this.shownRows = LAZY_ROWS
+						// 回到列表顶部。scroll-view 只在值**变化**时才响应 ——
+						// 在 0 上再设一次 0 是没用的，先抖半像素（人眼看不出来）
+						this.scrollTop = this.scrollTop === 0 ? 0.5 : 0
+					}
 					// 分类标题从查回来的流水里取（第一笔的 categoryName + parentName 就是这一页的分类）。
 					// 走数据而不是走 URL，名字因此永远与库里的当前值一致；**带上父分类**（`餐饮-早餐`）
 					// 才好跟占比条上那根条对上。这一期没有流水时取不到，就让页头与空态都不点名（见 emptyText）。
@@ -444,6 +557,13 @@
 </script>
 
 <style lang="less">
+	// 页面容器本身不许滚（能滚的只有下面那块 scroll-view）。App 端的页面 body 默认是
+	// **可滚且带回弹**的 —— 光给 .page 写 overflow: hidden 管不到它那一层。与首页同规，
+	// pages.json 那边另有 app-plus.bounce: none 收口。
+	page {
+		overflow: hidden;
+	}
+
 	// 本页独有的两处：页头信息条（.hd）与底部留白（.foot-pad）。
 	// 列表、账户卡片那些样式在文件末尾 —— 它们是**从首页复制过来的**，原因见那一段的开头。
 
@@ -503,8 +623,42 @@
 	// 改这里任何一个数值时，请同步改首页对应那一段。
 
 	.page {
-		min-height: 100vh;
+		// 钉死在视口上（与首页同规，为什么不用 100vh 见 index.vue 那条注释）。
+		// box-sizing 仍然必需 —— 本页的 paddingTop（状态栏）是内联加上来的
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		box-sizing: border-box;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
 		background: var(--md-surface-container);
+	}
+
+	// 页头这三块都不伸缩。flex 列里的子项默认会被压缩，不标 flex: none 的话，
+	// 列表一长就会把它们挤扁。
+	// （首页那边是一整块 .head-fixed 包住的；这里包不了 —— .top / .hd 落在
+	//   <template v-else> 外面，包不进去，所以改成给每个定高元素单独标）
+	.top,
+	.hd,
+	.list-head {
+		flex: none;
+	}
+
+	// 列表滚动区：吃掉父容器剩下的高度。
+	// ★ 别补 height: 0（首页那边踩过这个坑，说明写在那一条注释里）：scroll-view 的
+	//   内层 100% 参照外层的**计算**高度，外层写死 0 会让它恒可滚 —— 内容再少也一样
+	.list-body {
+		flex: 1;
+		min-height: 0;
+	}
+
+	// 滚动内容的包裹层：measureList() 靠它量「内容总高」。自身不需要样式，
+	// 写这条规则是为了让它在本页有定义 —— 静态 class 没定义的话跨页样式门会拦
+	.list-inner {
+		display: block;
 	}
 
 	.list-head {
@@ -588,6 +742,7 @@
 			right: 28rpx;
 			display: flex;
 			flex-direction: column;
+			// 按现有子项居中：只有删除一枚的调整流水行，它就落在行的正中央（见 index.vue 那段）
 			justify-content: center;
 			gap: 16rpx;
 			z-index: 2;
@@ -613,7 +768,34 @@
 			display: flex;
 			flex-direction: column;
 
+			// 标题行 + 「预付」标识（与首页同规，理由见 index.vue）
+			.t-row {
+				display: flex;
+				align-items: center;
+				gap: 10rpx;
+			}
+
+			.pre-tag {
+				flex-shrink: 0;
+				padding: 2rpx 12rpx;
+				border-radius: 999rpx;
+				font-size: 20rpx;
+				color: var(--md-primary-strong);
+				background: var(--md-primary-container);
+			}
+
+			// 「结清」标识：线框胶囊、没有底色；文字与「预付」那枚同色（主色）
+			.settled-tag {
+				flex-shrink: 0;
+				padding: 2rpx 12rpx;
+				border-radius: 999rpx;
+				border: 2rpx solid var(--md-outline-variant);
+				font-size: 20rpx;
+				color: var(--md-primary-strong);
+			}
+
 			.t {
+				min-width: 0;
 				font-size: 30rpx;
 				font-weight: 500;
 				color: var(--md-on-surface);
@@ -732,12 +914,24 @@
 			}
 
 			// 名字与「支 / 收」上下两行（与首页那一份保持一致）
+			//
+			// ★ App 端每页 CSS 独立 —— 这一份是照首页那份抄的，改一边记得改另一边
+			//   （check-pages 的跨页样式检查只拦「用了别页的类」，拦不住「两页各有各的写法」）。
 			.ap-mid {
 				flex: 1;
 				min-width: 0;
 				display: flex;
 				flex-direction: column;
 				gap: 6rpx;
+			}
+
+			// 名字那一行：左名字、右余额（baseline 对齐 —— 名字 28rpx、余额 26rpx，
+			// 按中心对齐会看着一高一低）
+			.ap-top {
+				display: flex;
+				align-items: baseline;
+				justify-content: space-between;
+				gap: 16rpx;
 			}
 
 			.ap-name {
@@ -747,6 +941,23 @@
 				white-space: nowrap;
 				overflow: hidden;
 				text-overflow: ellipsis;
+			}
+
+			// 账户余额（累计到**今天**，与下一行的「支 / 收」不是一个口径 —— 那是本期的）。
+			// **不加粗**（用户裁定，与首页一致）：这一行里名字才是要找的东西。
+			.ap-bal {
+				flex-shrink: 0;
+				font-size: 26rpx;
+				color: var(--md-on-surface-variant);
+
+				&.neg {
+					color: var(--md-error);
+				}
+			}
+
+			// 「全部账户」是汇总行，余额留一档份量（与首页那一份同一个写法）
+			&.all .ap-bal {
+				font-weight: 500;
 			}
 
 			// 本期该账户的收支（**不是余额**）：支出走中性色、收入走收入色
@@ -761,14 +972,14 @@
 				}
 			}
 
-			// 弹性空档：撑开名字那两行与右侧对勾之间的空白；对勾因此仍贴右
-			.ap-gap {
-				flex: 1;
-				min-width: 0;
-			}
-
+			// 勾**恒占位**（未选中的用 visibility 藏起来）—— 与首页那一份同一个理由：
+			// 用 v-if 的话勾一出现就把左边挤窄，余额跟着缩，选中项与未选中项排版不一致。
 			.ap-check {
 				flex-shrink: 0;
+
+				&.off {
+					visibility: hidden;
+				}
 			}
 		}
 	}

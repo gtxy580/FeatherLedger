@@ -81,9 +81,6 @@
       </view>
       <view class="pv-hint"><text>只影响新建时的默认颜色，已有的不会变</text></view>
     </view>
-
-    <view class="reset af-press" :class="{ pressing: isPressed('reset') }" @touchstart="pressOn('reset')"
-      @touchend="pressOff" @touchcancel="pressOff" @click="reset"><text>恢复默认</text></view>
   </view>
 </template>
 
@@ -191,9 +188,6 @@ export default {
         this.subMode = prev
         uni.showToast({ title: '设置失败', icon: 'none' })
       }
-    },
-    reset() {
-      this.pick(DEFAULT_THEME.key)
     }
   }
 }
@@ -353,22 +347,6 @@ export default {
   text {
     font-size: 23rpx;
     color: var(--md-outline);
-  }
-}
-
-.reset {
-  margin: 36rpx 32rpx 0;
-  height: 88rpx;
-  border-radius: 999rpx;
-  background: var(--md-surface);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  text {
-    font-size: 28rpx;
-    font-weight: 600;
-    color: var(--md-on-surface-variant);
   }
 }
 </style>

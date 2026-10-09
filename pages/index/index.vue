@@ -15,6 +15,10 @@
 		</view>
 
 		<template v-else>
+			<!-- 固定区：大标题 → 列表头这一整段不跟着列表滚（用户裁定：只有列表区能滚）。
+			     里面几十行的缩进**没动**，只在外面包了一层 —— 重排一遍只会把 diff 撑爆，
+			     而这一层纯粹是布局用的，不参与任何数据与事件 -->
+			<view class="head-fixed">
 			<!-- 大标题 + 一句话签名（点签名即改，末尾铅笔是「可编辑」提示） -->
 			<view class="appbar" :style="{ paddingTop: statusBarHeight + 10 + 'px' }">
 				<view class="title-row">
@@ -80,15 +84,34 @@
 			<!-- 列表头 -->
 			<view class="list-head">
 				<text class="cnt">{{ mode === 'year' ? '本年' : '本月' }}共{{ totalCount }}笔</text>
-				<!-- 账户筛选：从标题行搬到这儿（用户裁定），替掉原来的左滑提示 -->
+				<!-- 账户筛选：从标题行搬到这儿（用户裁定），替掉原来的左滑提示。
+				     右上角的角标 = 还有几笔预付没报回来（0 的时候不出现） -->
 				<view class="acct-btn" @click="openAcctPicker">
 					<text class="acct-t">{{ accountName }}</text>
 					<view :style="maskStyle('chevDown', 24, 'var(--md-on-surface-variant)')"></view>
+					<view v-if="pendingCount > 0" class="badge">
+						<text class="badge-t num">{{ pendingCount }}</text>
+					</view>
 				</view>
 			</view>
+			</view>
 
-			<!-- 分组列表：月视图按天 / 年视图按月，结构同构 -->
-			<view v-for="g in groups" :key="g.key" class="group">
+			<!-- 空态**不进滚动区**（理由见 prepay.vue）：它有整个剩余高度可用，也不该能滚 -->
+			<view v-if="groups.length === 0" class="empty">
+				<text class="empty-icon">🐦</text>
+				<text class="empty-text">{{ periodLabel }}还没有记账</text>
+			</view>
+
+			<!-- **只有这一块滚**。列表到底由 scroll-view 自己的 scrolltolower 触发 ——
+			     页头已经不参与滚动了，页面的 onReachBottom 因此永远不会响 -->
+			<scroll-view v-else class="list-body" :scroll-y="listScrollable" :scroll-top="scrollTop"
+				@scrolltolower="onListLower">
+			<!-- 包裹层：measureList() 靠它量「内容总高」—— 列表顶层是多个 .group，
+			     没有这么一个统一的父节点，就只能去猜「最后一个节点是谁」 -->
+			<view class="list-inner">
+			<!-- 分组列表：月视图按天 / 年视图按月，结构同构。走 visibleGroups（懒加载切出来的
+			     那一段），不是 groups —— 数据全量在手，渲染按需放 -->
+			<view v-for="g in visibleGroups" :key="g.key" class="group">
 				<view class="group-head">
 					<text class="g-label">{{ g.label }}</text>
 					<view class="g-sub num">
@@ -97,13 +120,18 @@
 						<text v-if="g.income" class="inc">收 {{ fmtYuan(g.income) }}</text>
 					</view>
 				</view>
-				<view v-for="r in g.records" :key="r.id" class="row"
-					:class="{ managing: manageMode, pressing: pressedRowId === r.id }" @click.stop="onRowTap"
-					@touchstart="onRowPressStart($event, r)" @touchmove="onRowPressMove"
+				<view v-for="r in g.records" :key="r.id" class="row" :class="{ managing: manageMode }"
+					@click.stop="onRowTap" @touchstart="onRowPressStart" @touchmove="onRowPressMove"
 					@touchend="onRowPressEnd" @touchcancel="onRowPressEnd">
 					<category-icon :icon="r.iconKey" :color="r.iconColor" :name="r.iconName" :size="80" />
 					<view class="txt">
-						<text class="t">{{ r.mainTitle }}</text>
+						<!-- 标题 + 「预付」标识同一行：标识是这块的，不能塞进 .txt（那是列容器，
+						     塞进去会另起一行）。App 端 <text> 是行内元素，同行必须有显式 flex 容器 -->
+						<view class="t-row">
+							<text class="t">{{ r.mainTitle }}</text>
+							<text v-if="r.prepay" class="pre-tag">预付</text>
+							<text v-if="r.settled" class="settled-tag">结清</text>
+						</view>
 						<text v-if="r.subTitle" class="sub">{{ r.subTitle }}</text>
 					</view>
 					<!-- 三态：支出「-」红、收入「+」收入色、转账不带正负号走中性色（它不算收支） -->
@@ -113,8 +141,16 @@
 					     它们在**绝对定位**里（见样式）—— 不参与行高，所以进编辑态列表高度不变 -->
 					<!-- 手续费行（transferId 非空）不给编辑/删除按钮：它完全由所属转账决定，
 					     给了半个入口反而会出现「删了它、编辑转账又把它插回来」的状态不一致 -->
-					<view v-if="actsAlive && r.transferId == null" class="acts" :class="{ closing: actsClosing }">
-						<view class="act act-edit" @click.stop="onEditTap(r)">
+					<!-- 调整流水（r.adjust，分类是「差异调节」）不给编辑、**但要给删除**：
+					     它的金额与分类是改余额时反推出来的，手改一笔就破坏了「这笔调整让余额正好
+					     落到目标值」那个前提 —— 而余额是流水算出来的，用户改完只会看到数字不对，
+					     找不到是谁动的。删除是合理的（余额就回到调整前）。服务层还有一道硬拦。
+					     ★ 编辑按钮整枚**不渲染**（v-if，不是 visibility: hidden）：这一行只剩删除
+					     一枚，.acts 按现有子项居中，它正好落在行的正中央 —— 换个方式占位就没有这个效果 -->
+					<!-- 结清流水（r.settled）也不给编辑/删除：它与所属的那笔预付是一体的，
+					     要撤就回「预付历史」长按取消结清 —— 单删这一条会留下半截账 -->
+					<view v-if="actsAlive && r.transferId == null && !r.settled" class="acts" :class="{ closing: actsClosing }">
+						<view v-if="!r.adjust" class="act act-edit" @click.stop="onEditTap(r)">
 							<view :style="maskStyle('pencil', 30, 'var(--md-primary)')"></view>
 						</view>
 						<view class="act act-del" @click.stop="onDelete(r)">
@@ -124,18 +160,15 @@
 				</view>
 			</view>
 
-			<!-- 空态 -->
-			<view v-if="groups.length === 0" class="empty">
-				<text class="empty-icon">🐦</text>
-				<text class="empty-text">{{ periodLabel }}还没有记账</text>
-			</view>
-
-			<!-- 列表到底提示：一次全量渲染无分页，有数据即到底 -->
+			<!-- 列表到底提示：还有没渲染出来的就先别说「到头了」—— 滚到底自动补一批
+			     （onReachBottom），补完这里才换成「没有更多了」 -->
 			<view v-if="groups.length" class="list-end">
-				<text>没有更多了</text>
+				<text>{{ hasMore ? '上拉加载更多' : '没有更多了' }}</text>
 			</view>
 
 			<view class="list-foot-pad"></view>
+			</view>
+			</scroll-view>
 		</template>
 
 		<!-- 签名编辑：底部卡片（与记一笔弹层同机制：closing 标志撑住节点播退场动画再拆） -->
@@ -173,25 +206,59 @@
 				<view class="af-grab"></view>
 				<text class="af-title">账户筛选</text>
 				<view class="ap-list">
-					<!-- 「全部账户」不显示收支（用户裁定）：它不是某个账户，写两个数在这里
-					     反而像是「另一个账户」，而它代表的是「不筛」 -->
+					<!-- 「全部账户」不显示本期收支（用户裁定）：它不是某个账户，写「支/收」在这里
+					     反而像是「另一个账户」，而它代表的是「不筛」。但**余额那一格例外** ——
+					     它显示的是总资产：既然这一屏开始看余额了，「一共多少」是最自然的一个数
+					     （用户裁定），而且它同样是「到今天」的口径，与下面各行的余额同源。 -->
 					<view class="ap-item all" :class="{ on: accountId == null }" @click="pickAccount(null)">
-						<text class="ap-name">全部账户</text>
-						<view v-if="accountId == null" class="ap-check" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
-						<view class="ap-gap"></view>
+						<view class="ap-mid">
+							<view class="ap-top">
+								<text class="ap-name">全部账户</text>
+								<text class="ap-bal num" :class="{ neg: totalBalance < 0 }">余额 {{ fmtYuan(totalBalance) }}</text>
+							</view>
+						</view>
+						<view class="ap-check" :class="{ off: accountId != null }" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
 					</view>
+					<!-- 这份列表里没有预付账户（listAccounts 滤掉了）：点账户是「按它筛」，
+					     看预付是「垫出去多少」—— 后者由下面那行「预付管理」负责，
+					     两件事挤在同一个位置上，用户只能靠猜 -->
 					<view v-for="a in accounts" :key="a.id" class="ap-item" :class="{ on: a.id === accountId }"
 						@click="pickAccount(a.id)">
 						<category-icon :icon="a.icon" :color="a.color" :name="a.name" :size="56" />
 						<view class="ap-mid">
-							<text class="ap-name">{{ a.name }}</text>
+							<!-- 名字行两端：左是账户名，右是**余额**（累计到今天）。
+							     ★ 它和下面那行的「支/收」不是一个口径 —— 那是**本期**的进出。
+							     分两行摆就是为了让这件事看得出来（用户选的版式）。 -->
+							<view class="ap-top">
+								<text class="ap-name">{{ a.name }}</text>
+								<text class="ap-bal num" :class="{ neg: a.balance < 0 }">余额 {{ fmtYuan(a.balance) }}</text>
+							</view>
 							<view class="ap-nums num">
 								<text>支 {{ fmtYuan(acctOf(a.id).expense) }}</text>
 								<text class="inc">收 {{ fmtYuan(acctOf(a.id).income) }}</text>
 							</view>
 						</view>
-						<view class="ap-gap"></view>
-						<view v-if="a.id === accountId" class="ap-check" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
+						<view class="ap-check" :class="{ off: a.id !== accountId }" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
+					</view>
+
+					<!-- 预付管理入口：摆在账户列表**末尾**（预付账户本来就在最后一行，位置对得上）。
+					     带同样的角标 —— 用户从首页看过来，「几笔没报回来」是同一个数。
+					     ★ 一笔待回收都没有时**也留着**（用户裁定）：那张页面里还挂着「历史记录」，
+					       藏了这个入口，结清过的旧账就哪儿都翻不到了。
+					     ★ 它是预付**唯一**的入口：「我的」页故意不加第二个（用户裁定）。 -->
+					<view class="ap-item pre-entry" @click="goPrepayManage">
+						<!-- 图标用**账户图标那套画法**（同一个组件：白图形 + 兜底灰圆底）。
+						     颜色不传 = 那个兜底灰 —— 预付账户本身不会出现在账户列表里了，
+						     而它的颜色恒为空（不可编辑），所以这里走兜底就是「和它一样」。 -->
+						<category-icon icon="svg:hand-coins" name="预" :size="56" />
+						<view class="ap-mid">
+							<view class="ap-top">
+								<text class="ap-name">预付管理</text>
+								<text v-if="pendingCount > 0" class="ap-bal pre-bal">待收 {{ pendingCount }} 笔</text>
+								<text v-else class="ap-bal">没有待回收</text>
+							</view>
+						</view>
+						<view :style="maskStyle('chevR', 28, 'var(--md-on-surface-variant)')"></view>
 					</view>
 				</view>
 				<view class="af-btns">
@@ -245,6 +312,8 @@
 		deleteRecord,
 		decorateRecord
 	} from '@/services/record.js'
+	// 角标要的「还有几笔没报回来」（预付唯一入口的那个数）
+	import { getPendingCount } from '@/services/prepay.js'
 	import {
 		listAccounts
 	} from '@/services/account.js'
@@ -264,6 +333,10 @@
 	} from '@/services/format.js'
 	import tabSwipe from '@/services/tab-swipe.js'
 	import pressFx from '@/services/press.js'
+	// 懒加载的切片逻辑（与分类明细页共用一份，可被 scripts/lazy-repro.mjs 覆盖）
+	import {
+		sliceGroups
+	} from '@/services/lazy.js'
 
 	// 管理模式：按住一行不动多久算长按；位移超过多少就认定「在滑列表」而取消长按。
 	// 取值与分类管理页同一组（同一个手势在两个页面应当是同一个手感）。
@@ -273,6 +346,10 @@
 	// 改一个就要改另一个（CSS 那边注释里也写了这句）。
 	const ACTS_OUT_MS = 180
 	const DEFAULT_TAGLINE = '今天也要认真存钱'
+	// 流水列表懒加载：首屏只渲染这么多行，滚到底再补一批（见 visibleGroups / onReachBottom）。
+	// 数的是**流水条数**而不是分组数 —— 年视图里一个月能压着几百笔，按组分批等于没分；
+	// 按行数封顶，首屏的节点数才与这期间记了多少笔无关。
+	const LAZY_ROWS = 60
 
 	export default {
 		mixins: [tabSwipe, pressFx],
@@ -291,6 +368,20 @@
 				},
 				groups: [],
 				totalCount: 0,
+				// 懒加载：当前渲染到第几行（真正切的是 visibleGroups），滚到底再 +LAZY_ROWS。
+				// 数据仍是**全量**查回来的 —— 合计、页头、分组小计都要全量才算得对。
+				shownRows: LAZY_ROWS,
+				// 列表滚动位置（只用来「切期回到顶部」——用户自己滚不会回写这里，
+				// scroll-view 是单向绑定）
+				scrollTop: 0,
+				// 这一块能不能滚：由 measureList() 按「内容是否真的超过可用高度」决定。
+				// 内容装得下就把 scroll-y 关掉 —— scroll-view 内部认的「内容高度」跟它
+				// 渲染出来的框高对不上（真机实测：框 707、内容 280，却滚了 75px），
+				// 跟它算不明白，干脆按我们自己量到的数决定让不让它滚
+				listScrollable: false,
+				// 上一次 load 的「期间 + 账户」指纹：变了才把 shownRows 收回首屏。
+				// 从记一笔返回是**同一期间重查**，那时不该把用户滚到的位置打回顶部。
+				loadKey: '',
 				loadError: false,
 				tagline: DEFAULT_TAGLINE,
 				// 签名编辑底部卡片
@@ -308,14 +399,13 @@
 				pressFired: false, // 这一次按压已经进过管理模式（用来吞掉随后派生出的那次 click）
 				pressStartX: 0,
 				pressStartY: 0,
-				// 长按**成立**的那一行（null = 没有）。★ 手指落下时**不设** —— 那样点一下
-				// 也会闪一下底色，而点一行是日常操作，那下闪是噪音。只在长按真的成立、
-				// 进管理模式的那一刻设上，抬手清掉（见 onRowPressStart）
-				pressedRowId: null,
 				loadToken: 0, // 请求令牌：快速切期丢弃晚到响应（收口审查 M1）
 				// M6 账户筛选（null = 全部）
 				accounts: [],
 				accountId: null,
+				// 还有几笔预付没报回来（角标 + 弹层里那行「预付管理」都用它）。
+				// 0 = 两个地方都不显示数字
+				pendingCount: 0,
 				// 本期各账户的收支（`[{id, income, expense}]`），账户筛选弹层里显示的是它，
 				// **不是账户余额** —— balance 是累计到今天的，与用户正在看的这一期无关
 				acctTotals: [],
@@ -334,17 +424,45 @@
 			}
 		},
 		computed: {
+			/**
+			 * 各账户余额合计 —— 「全部账户」那一行右端显示的。
+			 *
+			 * ★ 与 services/account.js 的 `getTotalAssets()` 是同一个算法（那边就是
+			 *   `listAccounts()` 求和），而这一页手上已经有那份列表了，所以直接算，
+			 *   不再多查一次库。口径不会走散 —— 两边求的都是同一个 `balance` 字段。
+			 */
+			totalBalance() {
+				return this.accounts.reduce((n, a) => n + a.balance, 0)
+			},
+			/**
+			 * 懒加载切出来的那一段（数据全量在手，只有渲染按需放）。
+			 * 纯函数在 services/lazy.js —— 首页与分类明细共用一份，边界另有脚本覆盖。
+			 */
+			lazySlice() {
+				return sliceGroups(this.groups, this.shownRows)
+			},
+			// 模板真正 v-for 的就是它，不是 groups
+			visibleGroups() {
+				return this.lazySlice.groups
+			},
+			// 还有没渲染出来的（滚到底要不要继续补）
+			hasMore() {
+				return this.lazySlice.more
+			},
 			periodLabel() {
 				if (this.mode === 'year') return `${this.year}年`
 				if (!this.month) return ''
 				const [y, m] = this.month.split('-')
 				return `${y}年${Number(m)}月`
 			},
-			// 账户按钮文案：未筛 = 「全部」
+			// 账户按钮文案：未筛 = 「全部账户」（用户裁定：写全，不要只写「全部」——
+			// 弹层里那一行本来就叫「全部账户」，两处该是同一个词。与分类明细页同一份）
 			accountName() {
 				const a = this.accounts.find((x) => x.id === this.accountId)
-				return a ? a.name : '全部'
+				return a ? a.name : '全部账户'
 			},
+			// 筛选弹层里列的账户就是 this.accounts —— 预付账户已经被 listAccounts 滤掉了
+			// （服务层是唯一真源，页面不再自己过滤一遍）
 			balance() {
 				return this.summary.income - this.summary.expense
 			},
@@ -386,6 +504,14 @@
 						this.actsClosing = false
 					}, ACTS_OUT_MS)
 				}
+			},
+			// 列表内容变了就重量一次：切期/切账户的重查、空态↔列表的切换、
+			// 以及滚到底补了一批（shownRows 变大）
+			'groups.length'() {
+				this.$nextTick(this.measureList)
+			},
+			shownRows() {
+				this.$nextTick(this.measureList)
 			}
 		},
 		onLoad() {
@@ -395,6 +521,9 @@
 			const p = (n) => String(n).padStart(2, '0')
 			this.month = `${d.getFullYear()}-${p(d.getMonth() + 1)}`
 			this.year = d.getFullYear()
+		},
+		onReady() {
+			this.measureList()
 		},
 		// 首次显示也会触发 onShow（在 onLoad 之后）；从记一笔/我的返回时刷新
 		onShow() {
@@ -436,6 +565,43 @@
 			return false
 		},
 		methods: {
+			/**
+			 * 列表滚到底：把懒加载的门槛再抬一批（模板随之多渲染 LAZY_ROWS 行）。
+			 *
+			 * 触发者是 **scroll-view 的 @scrolltolower**，不是页面的 onReachBottom ——
+			 * 页头固定后整页不再滚动，页面级那个钩子永远等不到。
+			 */
+			onListLower() {
+				if (!this.hasMore) return
+				this.shownRows += LAZY_ROWS
+			},
+			/**
+			 * 量出列表内容有没有超过可用高度，据此决定这一块能不能滚。
+			 *
+			 * 为什么不让 CSS 自己判断：这一块折腾过很多轮 —— .page 试过 min-height / 100vh /
+			 * 甚至锁死高度，真机上**总差那么一丁点**（内容明明不多，却刚好能拖出一个卡片间距）。
+			 * 根因是 App 端 scroll-view 内部认的「内容高度」跟它渲染出来的框高对不上
+			 * （真机实测：框高 707、内容只有 280，却滚了 75px），跟它算不明白。
+			 * 所以改成：我们自己量，量到装得下就把 scroll-y 关掉 —— 物理上没得滚。
+			 *
+			 * ★ 锚点是 .list-body 的 **top**（只由它上面的页头决定，不受它自己多高影响），
+			 *   拿窗口高减出来就是可用高度 —— 用「它自己的高度」就成了循环依赖。
+			 * ★ 容器高度本身**不锁**（交回 CSS 的 flex: 1），锁成「测量那一瞬的内容高」的话，
+			 *   列表里任何动态展开都会被裁掉一截。
+			 */
+			measureList() {
+				const q = uni.createSelectorQuery().in(this)
+				q.select('.list-body').boundingClientRect()
+				q.select('.list-inner').boundingClientRect()
+				q.exec((res) => {
+					const b = res && res[0]
+					const inner = res && res[1]
+					if (!b) return // 空态时这一块不存在，本来也不需要滚
+					const avail = Math.max(0, uni.getSystemInfoSync().windowHeight - b.top)
+					const content = inner ? inner.height : 0
+					this.listScrollable = content > avail + 1 // +1 容差躲浮点
+				})
+			},
 			maskStyle, // 模板里直接用
 			fmtYuan, // 由 services/format.js 提供（金额格式化只保留一份）
 			// ★ 搬到 format.js 之后**仍要在这里挂一次**：模板与 load() 里写的都是 this.dayLabel，
@@ -477,6 +643,11 @@
 				if (this.accountId === id) return // 没变就不重查
 				this.accountId = id
 				this.load() // 汇总 / 图表 / 列表同一批参数，时间不重置
+			},
+			/** 弹层末尾那行「预付管理」：先收弹层再跳 —— 否则返回时它还盖在首页上 */
+			goPrepayManage() {
+				this.closeAcctPicker()
+				uni.navigateTo({ url: '/pages/prepay/prepay' })
 			},
 			// ---- 快速切换期间（自绘滚轮，与记一笔的日期选择同一套手法）----
 			/**
@@ -603,9 +774,27 @@
 						}))
 					this.groups = list
 					this.totalCount = list.reduce((n, g) => n + g.records.length, 0)
+					// 懒加载进度：**只在换了期间或账户时归零**。onShow 的每次重查（从记一笔返回）
+					// 指纹不变，于是保留用户已经滚出来的那些行 —— 否则滚到第 200 行回来，列表
+					// 啪地缩回首屏 60 行，人还以为记录丢了。
+					const key = `${this.mode}|${this.month}|${this.year}|${this.accountId}`
+					if (key !== this.loadKey) {
+						this.loadKey = key
+						this.shownRows = LAZY_ROWS
+						// 换了期间就回到列表顶部。scroll-view 只在值**变化**时响应，
+						// 所以在 0 上再设一次 0 是没用的 —— 先抖半像素，人眼看不出来
+						this.scrollTop = this.scrollTop === 0 ? 0.5 : 0
+					}
 					this.summary = {
 						income: data.income,
 						expense: data.expense
+					}
+					// 预付角标：它说的是「此刻还有几笔挂着」，与本页看的期间无关，所以不进上面那批
+					// 并发查询。单独兜底 —— 它失败不该把整页数据一起拖红。
+					try {
+						this.pendingCount = await getPendingCount()
+					} catch (e) {
+						console.warn('[index] 预付角标读取失败', e)
 					}
 					this.loadError = false
 				} catch (e) {
@@ -698,7 +887,7 @@
 			 * 与记一笔长按退格、tab 圆钮的按下态同一路数：手写计时而不用 @longpress
 			 * （移动端 webview 的长按事件触发时机不稳）。
 			 */
-			onRowPressStart(e, r) {
+			onRowPressStart(e) {
 				const t = e.touches && e.touches[0]
 				if (!t) return
 				this.pressStartX = t.clientX
@@ -711,11 +900,7 @@
 					this.pressTimer = null
 					this.pressFired = true
 					this.manageMode = true
-					// ★ 按下态**在这一刻才出现**，不是手指落下时（用户裁定）：手指落下就给反馈，
-					// 等于点一下也会闪一下 —— 而点一行是日常操作，那下闪是噪音不是反馈。
-					// 长按成立了才把这一行压深、缩小（见 .row.pressing），留到抬手。
-					this.pressedRowId = r.id
-					// 触觉反馈：模式变了但画面只是「开始抖」，先震一下（与分类页同法）
+					// 触觉反馈：模式变了但画面只是「右侧图标淡入」，先震一下（与分类页同法）
 					if (uni.vibrateShort) uni.vibrateShort({ fail: () => {} })
 				}, LONG_PRESS_MS)
 			},
@@ -733,8 +918,6 @@
 				}
 			},
 			onRowPressEnd() {
-				// 抬手就退：管理模式留着，只是这一行不再压深、缩回去
-				this.pressedRowId = null
 				if (this.pressTimer) {
 					clearTimeout(this.pressTimer)
 					this.pressTimer = null
@@ -783,9 +966,51 @@
 
 <style lang="less">
 
+	// 页面容器本身不许滚（能滚的只有下面那块 scroll-view）。App 端的页面 body 默认是
+	// **可滚且带回弹**的 —— 光给 .page 写 overflow: hidden 管不到它那一层，内容哪怕只差
+	// 几个像素，拖起来整页也会动。pages.json 那边另有 app-plus.bounce: none 收口。
+	page {
+		overflow: hidden;
+	}
+
 	.page {
-		min-height: 100vh;
+		// 钉死在视口上：页头固定、只有列表滚。
+		// ★ 用 fixed + 四边 0，**不要用 100vh** —— App 端 vh 与 webview 的真实可视高度不是一个
+		//   东西（页面容器还会给原生 tabBar 留空间），差出来的那一截正好让整页能滚「一点点」，
+		//   现象是「内容不多却拖得动、还停得住」。fixed 没有中间量可算错。
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		box-sizing: border-box;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
 		background: var(--md-surface-container);
+	}
+
+	// 固定区（大标题 → 列表头）：不伸缩、不滚动，永远占着上面那一块
+	.head-fixed {
+		flex: none;
+	}
+
+	// 列表滚动区：把父容器剩下的高度全吃掉。
+	// ★ 只写 flex: 1 + min-height: 0，**千万别**再补一句 height: 0（我加过，真机上翻了车）：
+	//   uni-app 的 scroll-view 会渲染成 <uni-scroll-view><div height:100%>… 的包装，
+	//   那个 100% 参照的是外层的**计算**高度 —— 外层一旦写成 height: 0，内层就解析成 0，
+	//   于是 scrollHeight > clientHeight 恒成立：只有两条记录也照样能滚出一片空白。
+	//   而 flex: 1 的 flex-basis 本来就是 0%，height: 0 纯属多余且有害。
+	.list-body {
+		flex: 1;
+		min-height: 0;
+	}
+
+	// 滚动内容的包裹层：measureList() 靠它量「内容总高」（列表顶层是多个 .group，
+	// 没有这一层就只能去猜最后一个节点是谁）。它自己不需要任何样式，
+	// 写这条规则是为了让它在本页有定义 —— 静态 class 没定义的话跨页样式门会拦
+	.list-inner {
+		display: block;
 	}
 
 	.appbar {
@@ -1055,6 +1280,8 @@
 		padding: 8rpx 18rpx;
 		border-radius: 999rpx;
 		background: var(--md-surface);
+		// 角标要挂在它的右上角
+		position: relative;
 
 		.acct-t {
 			min-width: 0;
@@ -1063,6 +1290,29 @@
 			white-space: nowrap;
 			overflow: hidden;
 			text-overflow: ellipsis;
+		}
+
+		// 待回收笔数：不占按钮自己的高度（绝对定位挂在右上角外沿），
+		// 免得首页这一行的排版被一个圆点撑开
+		.badge {
+			position: absolute;
+			top: -8rpx;
+			right: -8rpx;
+			min-width: 32rpx;
+			height: 32rpx;
+			padding: 0 8rpx;
+			box-sizing: border-box;
+			border-radius: 999rpx;
+			background: var(--md-error);
+			display: flex;
+			align-items: center;
+			justify-content: center;
+
+			.badge-t {
+				font-size: 20rpx;
+				font-weight: 600;
+				color: var(--md-on-primary);
+			}
 		}
 	}
 
@@ -1106,23 +1356,11 @@
 		// 而不是瞬移（退出时反向滑回）。**只过渡 padding-right**：上下内距没有变化点，
 		// 写成 padding 只会让别处改动也变得黏糊。0.22s ease-out 与项目其余过渡同一档。
 		//
-		// background / transform 是后加的（按下反馈）：0.08s 与 .af-press 同档 —— 再慢就从
-		// 「手感」变成「动画」了。三条过渡互不相干，各写各的时长，别合并成一条
-		// （那会让其中一方被迫接受另一方的节奏）。
-		//
-		// ★ transform 必须写在这里，不能靠给 .row 挂 .af-press ——.af-press 的 transition 在
-		//   App.vue（全局），页面样式优先级更高会把它整个盖掉，那样缩放就没有过渡、硬跳。
-		transition: padding-right 0.22s ease-out, background 0.08s ease-out, transform 0.08s ease-out;
-
-		// 长按成立后的反馈：**缩一下**（.af-press 同一个 0.9，手感与按按钮一致）+ 底色深一档。
-		// 只有变色是不够的（用户反馈：「只是变色并没有按一个按钮的感觉」）—— 首页进管理模式时
-		// **不抖**（早先裁定），只有右侧图标淡入 + 一下震动，所以这 0.9 是按住 500ms 后唯一
-		// 明确的「按到了」的信号，值得给足。
-		// 抬手即退；底色那档正好是卡片与页面底的差值，切主题自动跟随。
-		&.pressing {
-			background: var(--md-surface-container);
-			transform: scale(0.9);
-		}
+		// ★ 2026-10-09 撤过一次「按下反馈」：曾经给 .row 加过 `.pressing`（底色深一档 +
+		//   scale(0.9)），用户反馈要去掉 —— 长按成立的信号回到只有「右侧图标淡入 + 一下震动」。
+		//   所以这里**不要**再顺手把 background/transform 加回 transition：那是给按下态用的，
+		//   没有那个状态就只会让别处的改动变黏。
+		transition: padding-right 0.22s ease-out;
 
 		// 管理态：给右侧两枚图标让出横向空间 —— 金额靠这条内距往左挤。
 		// 96rpx = 图标盒 44rpx + 与金额的间隔 24rpx + 行本身的右内距 28rpx（改 .act 尺寸时这条要跟着算）。
@@ -1137,10 +1375,14 @@
 		.acts {
 			position: absolute;
 			top: 0;
-			bottom: 0; // 上下都贴满 → 子项垂直居中，不用 transform
+			bottom: 0; // 上下都贴满 → 子项整体垂直居中，不用 transform
 			right: 28rpx; // 与行右内距对齐：图标右缘与金额右缘同一条竖线
 			display: flex;
 			flex-direction: column;
+			// ★ 居中是**按现有子项**算的，这正是要的效果，别改成固定高度：
+			//   两枚（编辑 + 删除）时一上一下；调整流水只有删除一枚（编辑按钮在模板里被
+			//   v-if 拿掉了），它就落在行的正中央 —— 单独一枚按钮居中才顺手。
+			//   曾经为了「和上下其他行的删除按钮对齐」把它钉死在下方，用户否掉了。
 			justify-content: center;
 			gap: 16rpx;
 			z-index: 2;
@@ -1170,7 +1412,40 @@
 			display: flex;
 			flex-direction: column;
 
+			// 标题行：标题 + 「预付」标识并排（只有预付那类流水才有标识）。
+			// 标识**不能**直接塞进 .txt —— 那是 column 容器，塞进去会另起一行
+			.t-row {
+				display: flex;
+				align-items: center;
+				gap: 10rpx;
+			}
+
+			// 「预付」标识：这一笔的金额照样走支出那套（红字、减号），
+			// 这枚小胶囊只说明「它其实是垫出去的钱，等着收回来」
+			.pre-tag {
+				flex-shrink: 0;
+				padding: 2rpx 12rpx;
+				border-radius: 999rpx;
+				font-size: 20rpx;
+				color: var(--md-primary-strong);
+				background: var(--md-primary-container);
+			}
+
+			// 「结清」标识：**线框胶囊、没有底色**（用户裁定）—— 与「预付」那枚实心的一对比，
+			// 一眼分得清哪个是「还在外面挂着」、哪个是「已经收尾留下的」。
+			// 文字与「预付」那枚同色（主色），两枚摆在一行才像一套
+			.settled-tag {
+				flex-shrink: 0;
+				padding: 2rpx 12rpx;
+				border-radius: 999rpx;
+				border: 2rpx solid var(--md-outline-variant);
+				font-size: 20rpx;
+				color: var(--md-primary-strong);
+			}
+
 			.t {
+				// flex 子项默认 min-width:auto，不写这句上面的 ellipsis 不生效（长标题会顶破行）
+				min-width: 0;
 				font-size: 30rpx;
 				font-weight: 500;
 				color: var(--md-on-surface);
@@ -1312,6 +1587,20 @@
 				background: var(--md-primary-container);
 			}
 
+			// 末尾那行「预付管理」：不是账户、不参与筛选，所以**不要**选中态那种胶囊感。
+			// 上面一条分隔线把它和账户列表分开 —— 它是「去另一个页面」，不是一个可筛的项。
+			&.pre-entry {
+				margin-top: 14rpx;
+				padding-top: 28rpx;
+				border-top: 2rpx solid var(--md-outline-variant);
+				border-radius: 20rpx;
+
+				.pre-bal {
+					color: var(--md-primary-strong);
+					font-weight: 600;
+				}
+			}
+
 			// 「全部账户」：无图标（用户裁定）。份量加在「更深的中性底 + 更大更粗的主色文字」上，
 			// 与「被选中」的绿底区分开——它因此**永远**醒目，而选中态仍是绿底 + 对勾。
 			// 做成**胶囊形**是关键：方形整块读起来像分区标题（标题不可点），而胶囊是
@@ -1337,15 +1626,27 @@
 				}
 			}
 
-			// 名字不再吃掉整行：对勾紧跟在它后面（用户裁定），余下宽度交给 .ap-gap
-			// 名字与「支 / 收」上下两行。挤成一行时，长金额会把名字压没 ——
+			// 名字行与「支 / 收」行上下两行。挤成一行时，长金额会把名字压没 ——
 			// 而账户名才是用户在这一屏里真正要找的东西。
+			//
+			// ★ 2026-10-09：这一格改成**吃掉整行余宽**（原先它与 .ap-gap 各占一半，
+			//   名字行的右端其实落在行的中点）。加余额之后余额要贴右边缘，才必须撑满；
+			//   对勾本来就靠右，去掉 .ap-gap 之后位置一点没变。
 			.ap-mid {
 				flex: 1;
 				min-width: 0;
 				display: flex;
 				flex-direction: column;
 				gap: 6rpx;
+			}
+
+			// 名字那一行：左名字、右余额。用 baseline 对齐 —— 名字 28rpx、余额 26rpx，
+			// 按中心对齐会让两者看着一高一低。
+			.ap-top {
+				display: flex;
+				align-items: baseline;
+				justify-content: space-between;
+				gap: 16rpx;
 			}
 
 			.ap-name {
@@ -1355,6 +1656,28 @@
 				white-space: nowrap;
 				overflow: hidden;
 				text-overflow: ellipsis;
+			}
+
+			// 账户余额（累计到**今天**，与下一行的「支 / 收」不是一个口径 —— 那是本期的）。
+			// 因此它比名字小一档、走中性色，不做成第三个「数字」跟着收支排。
+			// **不加粗**（用户裁定）：明细这一行里名字才是要找的东西，余额是补充信息 ——
+			// 加粗会让它跟名字抢。
+			// flex-shrink: 0：名字再长也不许把它挤没（它这一行就两个东西）。
+			.ap-bal {
+				flex-shrink: 0;
+				font-size: 26rpx;
+				color: var(--md-on-surface-variant);
+
+				// 负数（信用卡欠着、账户透支）——与账户页同一个 `.neg` 语义
+				&.neg {
+					color: var(--md-error);
+				}
+			}
+
+			// 「全部账户」那一行是**汇总**，余额留一档份量 —— 与它那行更大更粗的名字呼应。
+			// 明细行不加粗、汇总行加粗，这个差别本身就是「这一行不是某个账户」的提示。
+			&.all .ap-bal {
+				font-weight: 500;
 			}
 
 			// 本期该账户的收支（**不是余额**）：支出走中性色、收入走收入色，
@@ -1370,14 +1693,17 @@
 				}
 			}
 
-			// 弹性空档：撑开名字那两行与右侧对勾之间的空白；对勾因此仍贴右
-			.ap-gap {
-				flex: 1;
-				min-width: 0;
-			}
-
+			// 勾**恒占位**（未选中的用 visibility 藏起来）—— 它是布局的一部分。
+			// 用 v-if 的话，勾一出现就把左边挤窄，余额和「支 / 收」跟着往里缩，
+			// 同一个列表里选中项与未选中项的排版就不一样了（用户反馈的原话：
+			// 「当前选择项会有一个打勾，破坏了原有排版」）。
+			// 与「记一笔」类型切换那处同一个做法（那边是为了文字不跳动）。
 			.ap-check {
 				flex-shrink: 0;
+
+				&.off {
+					visibility: hidden;
+				}
 			}
 		}
 	}

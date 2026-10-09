@@ -301,7 +301,8 @@ export function parseBackup(text) {
 		outMeta.push({ key: r.key, value: r.value })
 	}
 
-	// ---- 默认账户锚：它是账户的身份锚（不可删、恒排第一、外观锁定），悬空会让账户页错乱
+	// ---- 默认账户锚：**2026-10-09 起没人读它了**（默认账户不再有特权），留着这条校验是因为
+	// 旧备份里可能带着这个键 —— 它指向一个不存在的账户，说明那份备份确实有问题，拦下来没坏处。
 	const anchor = outMeta.find((m) => m.key === 'defaultAccountId')
 	if (anchor && !accIds.has(Number(anchor.value))) return fail('备份已损坏：默认账户指向的账户不存在')
 

@@ -95,20 +95,74 @@ export const ICONS = {
 	'hand-coins': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M11 15h2a2 2 0 1 0 0-4h-3c-.6 0-1.1.2-1.4.6L3 17"/><path d="m7 21l1.6-1.4c.3-.4.8-.6 1.4-.6h4c1.1 0 2.1-.4 2.8-1.2l4.6-4.4a2 2 0 0 0-2.75-2.91l-4.2 3.9M2 16l6 6"/><circle cx="16" cy="9" r="2.9"/><circle cx="6" cy="5" r="3"/></g>',
 	'circle-dollar-sign': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8m4 2V6"/></g>',
 	'bitcoin': '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.767 19.089c4.924.868 6.14-6.025 1.216-6.894m-1.216 6.894L5.86 18.047m5.908 1.042l-.347 1.97m1.563-8.864c4.924.869 6.14-6.025 1.215-6.893m-1.215 6.893l-3.94-.694m5.155-6.2L8.29 4.26m5.908 1.042l.348-1.97M7.48 20.364l3.126-17.727"/>',
+
+	// ---- 收入分类专用（2026-10-09，用户审阅 docs/design/2026-10-09-income-icons.html 后通过）----
+	// 从 lucide-static@1.53.0 取的真图（ISC，与其余图标同一来源同一许可）。
+	// ★ 为什么非得新取图形：ICONS 里看着还有一批「钱」的键（wallet / coins / landmark /
+	//   piggy-bank / briefcase / store / credit-card / hand-coins / circle-dollar-sign…），
+	//   但它们**全被 ACCOUNT_ICON_KEYS 占着** —— 直接给收入用，会变成「收入分类和账户长得
+	//   一模一样」（用户反馈的原话）。所以这批按语义逐条避开了账户那 16 枚：
+	//   入账、薪酬、奖金、分成、利息、增长、变现、房租、投资、自媒体、赠与、报销。
+	// ⚠ 与其余键同样的规矩：**只能加不能删**（老库的分类存着 'svg:xxx'）。
+	'banknote-arrow-up': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 18H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5"/><path d="M18 12h.01"/><path d="M19 22v-6"/><path d="m22 19-3-3-3 3"/><path d="M6 12h.01"/><circle cx="12" cy="12" r="2"/></g>',
+	'badge-dollar-sign': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 18V6"/></g>',
+	trophy: '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M10 14.66V17a1 1 0 0 1-1 1 2 2 0 0 0-2 2v2"/><path d="M14 14.66V17a1 1 0 0 0 1 1 2 2 0 0 1 2 2v2"/><path d="M17.916 10H19.5A2.5 2.5 0 0 0 22 7.5V5a1 1 0 0 0-1-1h-3"/><path d="M4 22h16"/><path d="M6 9a6 6 0 0 0 12 0V3a1 1 0 0 0-1-1H7a1 1 0 0 0-1 1z"/><path d="M6.084 10H4.5A2.5 2.5 0 0 1 2 7.5V5a1 1 0 0 1 1-1h3"/></g>',
+	handshake: '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="m11 17 2 2a1 1 0 1 0 3-3"/><path d="m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4"/><path d="m21 3 1 11h-2"/><path d="M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3"/><path d="M3 4h8"/></g>',
+	percent: '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><line x1="19" x2="5" y1="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></g>',
+	sprout: '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M14 9.536V7a4 4 0 0 1 4-4h1.5a.5.5 0 0 1 .5.5V5a4 4 0 0 1-4 4 4 4 0 0 0-4 4c0 2 1 3 1 5a5 5 0 0 1-1 3"/><path d="M4 9a5 5 0 0 1 8 4 5 5 0 0 1-8-4"/><path d="M5 21h14"/></g>',
+	tag: '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></g>',
+	key: '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="m2 21 9.6-9.6"/><path d="m7.5 15.5 2.3 2.3a1 1 0 0 1 0 1.4l-2.1 2.1a1 1 0 0 1-1.4 0L4 19"/><circle cx="15.5" cy="7.5" r="5.5"/></g>',
+	gem: '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M10.5 3 8 9l4 13 4-13-2.5-6"/><path d="M17 3a2 2 0 0 1 1.6.8l3 4a2 2 0 0 1 .013 2.382l-7.99 10.986a2 2 0 0 1-3.247 0l-7.99-10.986A2 2 0 0 1 2.4 7.8l2.998-3.997A2 2 0 0 1 7 3z"/><path d="M2 9h20"/></g>',
+	megaphone: '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M11 6a13 13 0 0 0 8.4-2.8A1 1 0 0 1 21 4v12a1 1 0 0 1-1.6.8A13 13 0 0 0 11 14H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/><path d="M6 14a12 12 0 0 0 2.4 7.2 2 2 0 0 0 3.2-2.4A8 8 0 0 1 10 14"/><path d="M8 6v8"/></g>',
+	'heart-handshake': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M19.414 14.414C21 12.828 22 11.5 22 9.5a5.5 5.5 0 0 0-9.591-3.676.6.6 0 0 1-.818.001A5.5 5.5 0 0 0 2 9.5c0 2.3 1.5 4 3 5.5l5.535 5.362a2 2 0 0 0 2.879.052 2.12 2.12 0 0 0-.004-3 2.124 2.124 0 1 0 3-3 2.124 2.124 0 0 0 3.004 0 2 2 0 0 0 0-2.828l-1.881-1.882a2.41 2.41 0 0 0-3.409 0l-1.71 1.71a2 2 0 0 1-2.828 0 2 2 0 0 1 0-2.828l2.823-2.762"/></g>',
+	'receipt-text': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M13 16H8"/><path d="M14 8H8"/><path d="M16 12H8"/><path d="M4 3a1 1 0 0 1 1-1 1.3 1.3 0 0 1 .7.2l.933.6a1.3 1.3 0 0 0 1.4 0l.934-.6a1.3 1.3 0 0 1 1.4 0l.933.6a1.3 1.3 0 0 0 1.4 0l.933-.6a1.3 1.3 0 0 1 1.4 0l.934.6a1.3 1.3 0 0 0 1.4 0l.933-.6A1.3 1.3 0 0 1 19 2a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1 1.3 1.3 0 0 1-.7-.2l-.933-.6a1.3 1.3 0 0 0-1.4 0l-.934.6a1.3 1.3 0 0 1-1.4 0l-.933-.6a1.3 1.3 0 0 0-1.4 0l-.933.6a1.3 1.3 0 0 1-1.4 0l-.934-.6a1.3 1.3 0 0 0-1.4 0l-.933.6a1.3 1.3 0 0 1-.7.2 1 1 0 0 1-1-1z"/></g>',
+
+	// ---- 收入分类专用 · 第二批（2026-10-09 同日追加，同样取自 lucide-static@1.53.0）----
+	// 挑的时候照旧逐条避开 ACCOUNT_ICON_KEYS 那 16 枚（账户占的是 wallet/coins/landmark/
+	// piggy-bank/briefcase/store/credit-card/hand-coins/circle-dollar-sign/bitcoin 那一线「钱
+	// 放在哪儿」的图形），这批与账户一枚都不撞。
+	//
+	// ⚠ 这批 16 枚里有 **10 枚从没进过清单就退役了**：medal / trending-up / chart-line /
+	//   circle-percent / badge-percent / ticket-percent / banknote-check / arrow-down-to-line /
+	//   circle-arrow-down / receipt-cent。理由是用户看过预览后的原话「好多长得差不多的」——
+	//   它们与同族的 trophy / trend / percent / receipt-text / banknote-arrow-up 轮廓相仿，
+	//   摆在一个宫格里只会让人逐个读字（详见 INCOME_ICON_KEYS 那段的说明）。
+	//   **键留着**（本文件开头那条规矩：只能加不能删），将来想用直接进清单即可。
+	medal: '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M7.21 15 2.66 7.14a2 2 0 0 1 .13-2.2L4.4 2.8A2 2 0 0 1 6 2h12a2 2 0 0 1 1.6.8l1.6 2.14a2 2 0 0 1 .14 2.2L16.79 15"/><path d="M11 12 5.12 2.2"/><path d="m13 12 5.88-9.8"/><path d="M8 7h8"/><circle cx="12" cy="17" r="5"/><path d="M12 18v-2h-.5"/></g>',
+	crown: '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z"/><path d="M5 21h14"/></g>',
+	'trending-up': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M16 7h6v6"/><path d="m22 7-8.5 8.5-5-5L2 17"/></g>',
+	'chart-line': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="m19 9-5 5-4-4-3 3"/></g>',
+	'chart-pie': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M21 12c.552 0 1.005-.449.95-.998a10 10 0 0 0-8.953-8.951c-.55-.055-.998.398-.998.95v8a1 1 0 0 0 1 1z"/><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/></g>',
+	'circle-percent': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="M9 9h.01"/><path d="M15 15h.01"/></g>',
+	'badge-percent': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z"/><path d="m15 9-6 6"/><path d="M9 9h.01"/><path d="M15 15h.01"/></g>',
+	'ticket-percent': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M2 9a3 3 0 1 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 1 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M9 9h.01"/><path d="m15 9-6 6"/><path d="M15 15h.01"/></g>',
+	'banknote-check': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M11.748 18H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4.875"/><path d="m16 19 2 2 4-4"/><path d="M18 12h.01"/><path d="M6 12h.01"/><circle cx="12" cy="12" r="2"/></g>',
+	'arrow-down-to-line': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 17V3"/><path d="m6 11 6 6 6-6"/><path d="M19 21H5"/></g>',
+	'circle-arrow-down': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v8"/><path d="m8 12 4 4 4-4"/></g>',
+	'hand-platter': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 3V2"/><path d="m15.4 17.4 3.2-2.8a2 2 0 1 1 2.8 2.9l-3.6 3.3c-.7.8-1.7 1.2-2.8 1.2h-4c-1.1 0-2.1-.4-2.8-1.2l-1.302-1.464A1 1 0 0 0 6.151 19H5"/><path d="M2 14h12a2 2 0 0 1 0 4h-2"/><path d="M4 10h16"/><path d="M5 10a7 7 0 0 1 14 0"/><path d="M5 14v6a1 1 0 0 1-1 1H2"/></g>',
+	'dollar-sign': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></g>',
+	'receipt-cent': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 7v10"/><path d="M14.828 14.829a4 4 0 0 1-5.656 0 4 4 0 0 1 0-5.657 4 4 0 0 1 5.656 0"/><path d="M4 3a1 1 0 0 1 1-1 1.3 1.3 0 0 1 .7.2l.933.6a1.3 1.3 0 0 0 1.4 0l.934-.6a1.3 1.3 0 0 1 1.4 0l.933.6a1.3 1.3 0 0 0 1.4 0l.933-.6a1.3 1.3 0 0 1 1.4 0l.934.6a1.3 1.3 0 0 0 1.4 0l.933-.6A1.3 1.3 0 0 1 19 2a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1 1.3 1.3 0 0 1-.7-.2l-.933-.6a1.3 1.3 0 0 0-1.4 0l-.934.6a1.3 1.3 0 0 1-1.4 0l-.933-.6a1.3 1.3 0 0 0-1.4 0l-.933.6a1.3 1.3 0 0 1-1.4 0l-.934-.6a1.3 1.3 0 0 0-1.4 0l-.933.6a1.3 1.3 0 0 1-.7.2 1 1 0 0 1-1-1z"/></g>',
+	'file-text': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></g>',
+	'calendar-check': '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M8 2v3"/><path d="M16 2v3"/><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="m9 15 2 2 4-4"/></g>',
+	calculator: '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect width="16" height="20" x="4" y="2" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="16" x2="16" y1="14" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></g>',
+	globe: '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></g>',
+	factory: '<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 16h.01"/><path d="M16 16h.01"/><path d="M3 19a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8.5a.5.5 0 0 0-.769-.422l-4.462 2.844A.5.5 0 0 1 15 10.5v-2a.5.5 0 0 0-.769-.422L9.77 10.922A.5.5 0 0 1 9 10.5V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2z"/><path d="M8 16h.01"/></g>',
 }
 
 /**
-/**
- * 分类图标可选清单（2026-10-04 由 24 扩到 40：8 列 × 5 行恰好铺满，用户审阅
+ * **支出**分类的图标可选清单（2026-10-04 由 24 扩到 40：8 列 × 5 行恰好铺满，用户审阅
  * docs/design/2026-10-04-category-icons.html 后通过）。纯分类语义；
  * UI 工具图标 plus/pencil/cal/x/check/chevL/chevR/backspace/trash/note 不进选择器。
  * （曾有一枚 imgplus，2026-10-04 删掉了：它既不在两份清单里、代码里也没有任何引用 ——
  *   能删是因为「从没被摆出来过」，没有合法数据能引用它。**下面那三枚退场的不能这么删**。）
  *
- * ⚠ 从这里**移出**（如本轮的 receipt/chart/user/music/camera/ball）只是退出选择器，
+ * ⚠ 从这里**移出**（如 receipt/chart/user/music/camera/ball）只是退出选择器，
  *   键仍要留在上面的 ICONS 里 —— 老库的分类存着它们。
+ *
+ * ★ 2026-10-09 拆成两批（原先收入共用这一份）：新建收入分类时，摆在面前的是餐具、公交、
+ *   游戏机 —— 40 枚里只有 4 枚是「钱」。这一份现在只服务**支出**。
  */
-export const CATEGORY_ICON_KEYS = [
+export const EXPENSE_ICON_KEYS = [
 	'utensils', 'bus', 'bag', 'house',
 	'gamepad', 'pill', 'book', 'package',
 	'banknote', 'trend', 'gift', 'sparkles',
@@ -122,11 +176,50 @@ export const CATEGORY_ICON_KEYS = [
 ]
 
 /**
+ * **收入**分类的图标可选清单（8 列 × 3 行 = 24 枚，2026-10-09 定稿）。
+ *
+ * 前面 20 枚是从 lucide-static 取的新图形（见 ICONS 里那两段注释：为什么不能用
+ * wallet/coins/landmark 那些「现成看着也像钱」的键 —— 它们全被账户清单占着）。
+ * 末尾 4 枚是**四个预置收入分类在用的**（工资/理财/红包/其他收益），必须留着 ——
+ * 拿掉的话用户编辑那几个预置分类时选中态会落空（icons-repro 有断言钉着）。
+ *
+ * ★ 有过一版 32 枚，被用户否掉了：「好多长得差不多的」。当时的毛病是**用数量换
+ *   了区分度** —— 四个百分比（percent / circle-percent / badge-percent / ticket-percent
+ *   全是「斜线 + 两个点」，只差外面套什么壳）、两张同样的锯齿小票、两个下箭头、
+ *   三条上升折线。宫格是拿来「一眼扫到我要的那个」的，同义画法堆在一起只会让人逐个看字。
+ *   砍到 24 枚后，**每一枚的轮廓都不同** —— 这才是这份清单该守的线。
+ *   被砍掉的那 8 枚仍留在 ICONS 里（见那边注释），键一枚没删。
+ *
+ * 排列按语义成组（到账薪酬 → 增长收益 → 合作服务 → 变现票据 → 单据跨境 → 预置在用），
+ * 不是按加入顺序 —— 8 列铺开时同类挨着才好找。
+ *
+ * ⚠ 与支出清单**允许重复**（banknote / trend / gift / sparkles 两边都有）：手续费要用钞票、
+ *   送礼也要用礼物，重叠不影响任何人。这不是疏漏。与**账户**清单则一枚都不重 —— 那是
+ *   专门避开的东西。
+ */
+export const INCOME_ICON_KEYS = [
+	'banknote-arrow-up', 'badge-dollar-sign', 'trophy', 'crown',
+	'sprout', 'chart-pie', 'percent', 'calculator',
+	'handshake', 'heart-handshake', 'hand-platter', 'megaphone',
+	'tag', 'key', 'gem', 'dollar-sign',
+	'receipt-text', 'file-text', 'calendar-check', 'factory',
+	'banknote', 'trend', 'gift', 'sparkles'
+]
+
+/**
+ * 取某一类分类的可选图标清单。
+ * @param {number} type 1 = 支出，2 = 收入（与 records.type 同一套编号）
+ */
+export function iconKeysOf(type) {
+	return type === 2 ? INCOME_ICON_KEYS : EXPENSE_ICON_KEYS
+}
+
+/**
 /**
  * 账户图标可选清单（2026-10-04 由 13 扩到 16：8 列 × 2 行恰好铺满，用户审阅
  * docs/design/2026-10-04-account-icons.html 后通过）。两类：钱包/现金/零钱/信用卡/银行卡/
  * 支付宝/微信/其他是「钱放在哪儿」，后 8 枚是储蓄、投资、公司、商户、家庭、收款、外币、加密。
- * 与 CATEGORY_ICON_KEYS 同构：存裸 key，入库时补 'svg:' 前缀。
+ * 与两份分类清单同构：存裸 key，入库时补 'svg:' 前缀。
  *
  * ⚠ 两条硬规矩：① 移出（receipt/chart/user/house/gift）只是退出选择器，键仍要留在 ICONS 里；
  *   ② message-circle-dots 是**微信账户的默认图标**（db.js 种子里写死），不能移出。

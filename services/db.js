@@ -212,7 +212,10 @@ const CREATE_TABLES = [
     date TEXT NOT NULL,
     created_at TEXT NOT NULL,
     transfer_id INTEGER,
-    time TEXT
+    time TEXT,
+    prepay_id INTEGER,
+    prepay_done INTEGER DEFAULT 0,
+    internal INTEGER DEFAULT 0
   )`,
 	`CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -239,7 +242,38 @@ const CREATE_TABLES = [
  * 预置分类：种子与 v0→v1 迁移共用这份数据。
  * 颜色与 docs/design/2026-10-01-md3-preview.html 定稿一致；icon 为 svg: 前缀（services/icons.js 的 ICONS 键）。
  */
-/** 预置分类的种子。**导出给测试用**（scripts/icons-repro.mjs 要核「预置分类用的图标还在选择器里」）。 */
+/**
+ * 两个「差异调节」分类的 id（支出侧 / 收入侧），**只返回表里真的还在的那些**。
+ *
+ * 与 `getFeeCategoryId`（record.js）同一套路：锚存在 meta，但备份恢复 / 手工删表之后
+ * 锚可能指向一个不存在的行，所以读出来还得验一遍 —— 悬空的那一侧给 null，
+ * 调用方本来就要按「有没有」分支（没有就没法反算、也没法记账）。
+ *
+ * 为什么放 db.js：写这两个锚的代码就在本文件（seedIfEmpty / migrateAdjustCategory），
+ * 读写共处一份 key 列表；而 account.js（改余额）和 record.js（标记调整流水）都要用它，
+ * 放进其中任何一个都会造成两个服务互相 import。
+ * @returns {Promise<{out: number|null, in: number|null}>} out = 支出侧（余额调低），in = 收入侧（余额调高）
+ */
+export async function getAdjustCategoryIds() {
+	const read = async (key) => {
+		const [row] = await queryRaw(`SELECT value FROM meta WHERE key = ${esc(key)}`)
+		const n = Number(row && row.value)
+		if (!Number.isInteger(n) || n <= 0) return null
+		const [hit] = await queryRaw(`SELECT id FROM categories WHERE id = ${n}`)
+		return hit ? n : null
+	}
+	return { out: await read('adjustCategoryIdOut'), in: await read('adjustCategoryIdIn') }
+}
+
+/**
+ * 预置分类的种子。**导出给测试用**（scripts/icons-repro.mjs 要核「预置分类用的图标还在选择器里」）。
+ *
+ * `internal: true` = 内部件：由内部动作带出来、用户在任何选择器里都见不到的分类
+ * （转账带出手续费、改余额带出差异调节），`getCategoriesGrouped()` 会摘掉它们。
+ * 目前只给 icons-repro 放行一条断言 —— 那条要求「预置分类用的图标必须在它那一类的
+ * 选择器里」，理由是「编辑它时选中态会落空」；内部件压根编辑不到，前提不成立。
+ * ★ 内部件的图标仍必须存在于 ICONS（那条断言照旧管），只是不必在选择器里。
+ */
 export const PRESET_CATEGORIES = [
 	{ name: '餐饮', icon: 'svg:utensils', color: pal('amber'), type: 1, sort: 1 },
 	{ name: '交通', icon: 'svg:bus', color: pal('blue'), type: 1, sort: 2 },
@@ -253,11 +287,24 @@ export const PRESET_CATEGORIES = [
 	{ name: '学习', icon: 'svg:book', color: pal('iris'), type: 1, sort: 7 },
 	// 「其他」用石墨灰：它本来就该是不抢眼的中性色，而且这个值就是 category-icon 的兜底色
 	{ name: '其他', icon: 'svg:package', color: pal('graphite'), type: 1, sort: 8 },
-	{ name: '手续费', icon: 'svg:banknote', color: pal('olive'), type: 1, sort: 9 },
+	// internal: 详情见下面那段 —— 内部件，不进任何选择器
+	{ name: '手续费', icon: 'svg:banknote', color: pal('olive'), type: 1, sort: 9, internal: true },
 	{ name: '工资', icon: 'svg:banknote', color: pal('terracotta'), type: 2, sort: 1 },
 	{ name: '理财', icon: 'svg:trend', color: pal('olive'), type: 2, sort: 2 },
 	{ name: '红包', icon: 'svg:gift', color: pal('rose'), type: 2, sort: 3 },
-	{ name: '其他收益', icon: 'svg:sparkles', color: pal('green'), type: 2, sort: 4 }
+	{ name: '其他收益', icon: 'svg:sparkles', color: pal('green'), type: 2, sort: 4 },
+	// ★ 两个「差异调节」（2026-10-09）：改余额时选「记一笔调整」要落的分类。
+	//   它们与「手续费」同属内部件（`internal: true`）—— getCategoriesGrouped 里会摘掉
+	//   （分类管理看不到、记一笔也选不到），但**表里那两行是真的**，所以统计里会出现
+	//   「差异调节」这一项。两个（支出侧 + 收入侧）是因为差额有正负：
+	//   余额调低记支出、调高记收入。sort 给 99：排在所有正经分类后面（它们本来也不露脸）。
+	//   图标两边**统一 calculator**（用户裁定）：它俩对用户是同一件事，同一个图标才认得出
+	//   是一类；反正内部件不进选择器，不必迁就「支出分类只能用支出批图标」那条（见 internal）。
+	{ name: '差异调节', icon: 'svg:calculator', color: pal('graphite'), type: 1, sort: 99, internal: true },
+	{ name: '差异调节', icon: 'svg:calculator', color: pal('graphite'), type: 2, sort: 99, internal: true },
+	// ★ 「预付差额」（2026-10-09）：预付收回时**多收**的那部分落的分类（收入）。
+	//   同属内部件 —— 用户手动选它记收入就是凭空造一笔差额。sort 98，排在差异调节前面。
+	{ name: '预付差额', icon: 'svg:handshake', color: pal('olive'), type: 2, sort: 98, internal: true }
 ]
 
 /**
@@ -299,8 +346,8 @@ async function migrateAccounts() {
 	const orphans = Number(orphanRow?.c || 0)
 	if (orphans > 0) {
 		const t = now()
-		// 放第一行（用户裁定）：sort=0 小于种子账户的 1..3。
-		// 外观固定成 home + 灰（见 migrateAccountFace）
+		// 放第一行（用户裁定）：sort=0 小于种子账户的 1..3。它就是个普通账户，
+		// 之后能改名 / 改图标颜色 / 排序 / 删除（2026-10-09）—— 这里只是给个顺眼的初始外观
 		await execRaw(
 			`INSERT INTO accounts (name, icon, initial_balance, sort, created_at) VALUES ('默认账户', 'svg:house', 0, 0, '${t}')`
 		)
@@ -315,13 +362,15 @@ async function migrateAccounts() {
 }
 
 /**
- * M6 反馈轮迁移：① accounts 补 color 列（账户图标底色）；② 「默认账户」置顶并记下它的 id。
+ * M6 反馈轮迁移：① accounts 补 color 列（账户图标底色）；② 「默认账户」置顶。
  *
  * 为什么要独立一个函数：上面那步已被 meta.migrated.account 短路，跑过 M6 的设备不会再进；
  * 而这两件事对**老设备**同样要做（它们的默认账户还在最后一行、accounts 还没有 color 列）。
  *
- * 为什么记 id 而不是每次按名字找：账户可以改名，改名不该改变它的身份
- * （`meta.defaultAccountId` 是「受保护账户」与「排第一行」的唯一锚点）。
+ * ★ 2026-10-09：原来还在这里记 `meta.defaultAccountId` 这个「受保护账户」的身份锚，
+ *   连同下面那个 migrateAccountFace 一起删掉了 —— 默认账户不再特殊（可改名 / 改图标 /
+ *   改颜色 / 排序 / 删除，见 services/account.js），锚没有任何人读了。
+ *   置顶那一下留着：老设备上它本来就该在第一行，而这只跑一次，用户之后可以自己排。
  */
 async function migrateAccountHead() {
 	const already = await queryRaw(`SELECT value FROM meta WHERE key = 'migrated.acctHead'`)
@@ -337,30 +386,10 @@ async function migrateAccountHead() {
 	if (row) {
 		const id = Number(row.id)
 		await execRaw(`UPDATE accounts SET sort = 0 WHERE id = ${id}`)
-		await execRaw(`INSERT OR REPLACE INTO meta (key, value) VALUES ('defaultAccountId', ${esc(String(id))})`)
 		log(`默认账户置顶（id=${id}）`)
 	}
 
 	await execRaw(`INSERT OR REPLACE INTO meta (key, value) VALUES ('migrated.acctHead', ${esc(now())})`)
-}
-
-/**
- * M6 反馈轮迁移：「默认账户」的外观固定下来——灰色 + home 图标（用户裁定）。
- * 它从此不允许改名 / 改图标 / 改颜色（services/account.js 里硬拦），
- * 这里把老设备上可能已经被改过的外观修正一次；标记保证只跑一次。
- */
-async function migrateAccountFace() {
-	const already = await queryRaw(`SELECT value FROM meta WHERE key = 'migrated.acctFace'`)
-	if (already.length) return
-
-	const rows = await queryRaw(`SELECT value FROM meta WHERE key = 'defaultAccountId'`)
-	const id = Number(rows.length ? rows[0].value : 0)
-	if (id > 0) {
-		await execRaw(`UPDATE accounts SET icon = 'svg:house', color = '' WHERE id = ${id}`)
-		log(`默认账户外观固定为 home + 灰（id=${id}）`)
-	}
-
-	await execRaw(`INSERT OR REPLACE INTO meta (key, value) VALUES ('migrated.acctFace', ${esc(now())})`)
 }
 
 /**
@@ -433,8 +462,9 @@ async function migrateAccountColor() {
  *    新装用户打开 App 只有一个「手续费」分类）。空表 = 这是新装，手续费由 PRESET_CATEGORIES
  *    随其余预置一起播下，这里别插手。
  *
- * 身份锚按 id 不按名字（与 meta.defaultAccountId 同一套路）：用户把「手续费」改名成
- * 「转账费」之后锚仍然指着它，手续费行不会因此挂空。
+ * 身份锚按 id 不按名字：用户把「手续费」改名成「转账费」之后锚仍然指着它，
+ * 手续费行不会因此挂空。（账户那边的 defaultAccountId 锚已于 2026-10-09 废除 ——
+ * 默认账户不再有特权，锚也就没人读了。）
  */
 async function migrateFeeCategory() {
 	const already = await queryRaw(`SELECT value FROM meta WHERE key = 'migrated.feeCat'`)
@@ -454,6 +484,168 @@ async function migrateFeeCategory() {
 	}
 	await execRaw(`INSERT OR REPLACE INTO meta (key, value) VALUES ('feeCategoryId', ${esc(String(row.id))})`)
 	await execRaw(`INSERT OR REPLACE INTO meta (key, value) VALUES ('migrated.feeCat', ${esc(now())})`)
+}
+
+/**
+ * 两个「差异调节」分类（2026-10-09）：改账户余额时选「记一笔调整」要落的分类。
+ *
+ * 与手续费同一套路（见上面那段）：内部件、锚按 id 存 meta、空表交给 seedIfEmpty。
+ * ★ 一处不同：这里要按 **name + type** 找，不能只按名字 —— 两侧同名（支出一个、收入一个），
+ *   只按名字取到哪一个是随机的，而「余额调低记支出、调高记收入」要求严格对应。
+ *
+ * 两个分类而不是一个：差额有正负，支出侧的落 `type = 1`、收入侧落 `type = 2`，
+ * 混用一个会让「调整」跑进错误的统计口径里。
+ */
+async function migrateAdjustCategory() {
+	const already = await queryRaw(`SELECT value FROM meta WHERE key = 'migrated.adjustCat'`)
+	if (already.length) return
+
+	// 空表 = 新装，交给 seedIfEmpty 一次播下（PRESET_CATEGORIES 里含这两个，锚也由它写）
+	const [catCount] = await queryRaw('SELECT COUNT(*) AS c FROM categories')
+	if (Number(catCount.c) === 0) return
+
+	for (const [type, key] of [[1, 'adjustCategoryIdOut'], [2, 'adjustCategoryIdIn']]) {
+		// 两侧同一个图标（用户裁定）：对用户是同一件事，同一个图标才认得出是一类
+		const icon = 'svg:calculator'
+		let [row] = await queryRaw(`SELECT id FROM categories WHERE name = '差异调节' AND type = ${type}`)
+		if (!row) {
+			await execRaw(
+				`INSERT INTO categories (name, icon, color, type, parent_id, sort, created_at) VALUES
+       ('差异调节', ${esc(icon)}, ${esc(pal('graphite'))}, ${type}, NULL, 99, ${esc(now())})`
+			)
+			;[row] = await queryRaw(`SELECT id FROM categories WHERE name = '差异调节' AND type = ${type}`)
+		}
+		await execRaw(`INSERT OR REPLACE INTO meta (key, value) VALUES (${esc(key)}, ${esc(String(row.id))})`)
+	}
+	await execRaw(`INSERT OR REPLACE INTO meta (key, value) VALUES ('migrated.adjustCat', ${esc(now())})`)
+}
+
+/**
+ * 把「差异调节」两侧的图标统一成 calculator（2026-10-09 用户裁定：不管收支都用计算机）。
+ *
+ * ★ 为什么不能只改 PRESET_CATEGORIES：那只管**以后新建**的库。已经装过的设备上那两行早就
+ *   建好了（migrateAdjustCategory 建的，支出侧当时是扳手），改常量对它一点影响都没有 ——
+ *   用户会看到支出那条调整流水还是扳手。存量数据只能靠迁移改。
+ *
+ * 无条件覆盖两行：这个分类在分类管理里看不到、也编辑不到，不存在「用户自己换过图标」的情况。
+ * 用 name 匹配就够（两侧同名，本来就要一起改）；带标记保证幂等。
+ */
+async function migrateAdjustIcon() {
+	const already = await queryRaw(`SELECT value FROM meta WHERE key = 'migrated.adjustIcon'`)
+	if (already.length) return
+	await execRaw(`UPDATE categories SET icon = 'svg:calculator' WHERE name = '差异调节'`)
+	await execRaw(`INSERT OR REPLACE INTO meta (key, value) VALUES ('migrated.adjustIcon', ${esc(now())})`)
+}
+
+/**
+ * 预付（垫付 / 报销）：records 补三列 + 两样「内部件」（2026-10-09）。
+ *
+ * 三列的分工（详见 services/prepay.js 与 docs 里的设计）：
+ *   prepay_id    收回 / 差额 / 结清支出那几条，指向**预付那条**的 id；预付那条自己是 NULL
+ *   prepay_done  预付那条：0 = 还挂着（待回收），1 = 已结清
+ *   internal     内部搬运（收回、结清时的转账）：1 = 不进首页明细；记录本身是真的，余额照算
+ *
+ * 两样内部件，同一套路（见 migrateFeeCategory）：
+ *   「预付差额」分类 —— 多收的那部分记成收入，落在它上面（type 2，用户选不到）
+ *   预付账户 —— 钱的落脚点（垫出去的钱记在它名下，余额 = 还有多少在外面）
+ *
+ * 空表 = 新装：分类交给 seedIfEmpty 一次播下（PRESET_CATEGORIES 里有），账户也由它 INSERT。
+ */
+async function migratePrepay() {
+	const already = await queryRaw(`SELECT value FROM meta WHERE key = 'migrated.prepay'`)
+	if (already.length) return
+
+	// ① records 三列（新库由 CREATE TABLE 直接带上，这里只管老库）
+	const cols = (await queryRaw('PRAGMA table_info(records)')).map((c) => c.name)
+	for (const [name, ddl] of [
+		['prepay_id', 'INTEGER'],
+		['prepay_done', 'INTEGER DEFAULT 0'],
+		['internal', 'INTEGER DEFAULT 0']
+	]) {
+		if (!cols.includes(name)) {
+			log(`迁移：records 增加 ${name} 列`)
+			await execRaw(`ALTER TABLE records ADD COLUMN ${name} ${ddl}`)
+		}
+	}
+
+	// ②③ 两个内部件：只对**已有数据**的库建（空库交给 seedIfEmpty，否则会建两遍）
+	const [catCount] = await queryRaw('SELECT COUNT(*) AS c FROM categories')
+	if (Number(catCount.c) > 0) {
+		let [cat] = await queryRaw(`SELECT id FROM categories WHERE name = '预付差额' AND type = 2`)
+		if (!cat) {
+			await execRaw(
+				`INSERT INTO categories (name, icon, color, type, parent_id, sort, created_at) VALUES
+       ('预付差额', 'svg:handshake', ${esc(pal('olive'))}, 2, NULL, 98, ${esc(now())})`
+			)
+			;[cat] = await queryRaw(`SELECT id FROM categories WHERE name = '预付差额' AND type = 2`)
+		}
+		await execRaw(`INSERT OR REPLACE INTO meta (key, value) VALUES ('prepayDiffCategoryId', ${esc(String(cat.id))})`)
+	}
+
+	const [accCount] = await queryRaw('SELECT COUNT(*) AS c FROM accounts')
+	if (Number(accCount.c) > 0) {
+		let [acc] = await queryRaw(`SELECT id FROM accounts WHERE name = '预付账户'`)
+		if (!acc) {
+			await execRaw(
+				`INSERT INTO accounts (name, icon, color, initial_balance, sort, created_at) VALUES
+       ('预付账户', 'svg:hand-coins', '', 0, 99, ${esc(now())})`
+			)
+			;[acc] = await queryRaw(`SELECT id FROM accounts WHERE name = '预付账户'`)
+		}
+		await execRaw(`INSERT OR REPLACE INTO meta (key, value) VALUES ('prepayAccountId', ${esc(String(acc.id))})`)
+	}
+
+	await execRaw(`INSERT OR REPLACE INTO meta (key, value) VALUES ('migrated.prepay', ${esc(now())})`)
+}
+
+/**
+ * 把「结清时那笔内部转账」的标记从 1 改成 2（2026-10-09，同日稍晚）。
+ *
+ * 为什么要分这两个值：收回的搬运和结清的搬运**长得一模一样**（同是 type 3、同挂 prepay_id），
+ * 而「取消结清」必须认准后者删掉。早先只有 1 一个值，于是**老代码结清过的那几笔**在新代码里
+ * 被当成「收回」，取消结清时删不掉它 —— 用户会看到取消之后「已收」凭空多出那笔差额。
+ *
+ * 认领要两个条件同时成立（只按金额会误伤「收回的钱正好等于差额」那种巧合）：
+ *   ① 这笔转账的收款方 = **该预付的原支出账户**（结清是转回原账户；收回是转到用户选的账户）
+ *   ② 金额 = 同一笔预付下那笔支出（type = 1）的金额（两者同额是 settlePrepay 的写法决定的）
+ */
+async function migrateSettleInternal() {
+	const already = await queryRaw(`SELECT value FROM meta WHERE key = 'migrated.settleInternal'`)
+	if (already.length) return
+
+	// 预付条自己 → 它的原支出账户（只有预付那条是「转进预付账户 + 带分类」）
+	const [prepayAccRow] = await queryRaw(`SELECT value FROM meta WHERE key = 'prepayAccountId'`)
+	const prepayAcc = Number(prepayAccRow && prepayAccRow.value) || 0
+	if (prepayAcc > 0) {
+		const bars = await queryRaw(
+			`SELECT id AS id, account_id AS acc FROM records WHERE to_account_id = ${prepayAcc} AND type = 3 AND category_id IS NOT NULL`
+		)
+		const originOf = new Map()
+		for (const b of bars) originOf.set(Number(b.id), Number(b.acc))
+
+		const settled = await queryRaw(
+			`SELECT prepay_id AS pid, amount AS amount FROM records WHERE prepay_id IS NOT NULL AND type = 1`
+		)
+		const settledOf = new Map()
+		for (const s of settled) settledOf.set(Number(s.pid), Number(s.amount))
+		if (settledOf.size) {
+			const moves = await queryRaw(
+				`SELECT id AS id, prepay_id AS pid, amount AS amount, to_account_id AS toAcc
+         FROM records WHERE prepay_id IS NOT NULL AND type = 3 AND internal = 1`
+			)
+			for (const mv of moves) {
+				const pid = Number(mv.pid)
+				const settledAmt = settledOf.get(pid)
+				const origin = originOf.get(pid)
+				if (settledAmt != null && settledAmt === Number(mv.amount) && origin != null && origin === Number(mv.toAcc)) {
+					await execRaw(`UPDATE records SET internal = 2 WHERE id = ${Number(mv.id)}`)
+					log(`结清转账的标记修正为 2（id=${mv.id}）`)
+				}
+			}
+		}
+	}
+
+	await execRaw(`INSERT OR REPLACE INTO meta (key, value) VALUES ('migrated.settleInternal', ${esc(now())})`)
 }
 
 /**
@@ -567,7 +759,6 @@ async function migrate() {
 	}
 	await migrateAccounts()
 	await migrateAccountHead()
-	await migrateAccountFace()
 	await migrateAccountIcons()
 	await migrateChatBubble()
 	await migratePalette()
@@ -575,6 +766,11 @@ async function migrate() {
 	// （玫红本身不在 PALETTE_MIGRATION 里，所以顺序其实无差，但依赖关系写清楚）
 	await migrateAccountColor()
 	await migrateFeeCategory()
+	await migrateAdjustCategory()
+	// 必须紧跟上面那条：它负责**建**（建出来就是计算器），这条负责**改已经建过的**
+	await migrateAdjustIcon()
+	await migratePrepay()
+	await migrateSettleInternal()
 	await execRaw('PRAGMA user_version = 1')
 }
 
@@ -599,7 +795,10 @@ async function seedIfEmpty() {
 		//   卡片里会显示成「已选中」；取色板外的值会显示成没选中，用户会以为没设色。
 		//   微信 —— 聊天气泡图标（boxicons 的 message-circle-dots，见 icons.js 的说明）+ 色板里的绿
 		//   支付宝 —— **不选图标**，靠 category-icon 退回名称首字「支」+ 色板里的蓝
-		//   「默认账户」—— 保持 home + 空色（= 兜底灰），与 migrateAccountFace 钉的外观一致
+		//   「默认账户」—— home + 空色（= 兜底灰）。它只是**种子里的第一个账户**：能改名、
+		//   能改图标颜色、能排序、能删（2026-10-09 用户裁定），唯一的护栏是「至少留一个」。
+		//   ★ 不再往 meta 写 defaultAccountId 锚了 —— M6 那会儿靠它标记「受保护账户」，
+		//     现在没有任何人读它（老库里那行留着不管，新的不再写）。
 		//   现金 —— 钱包（2026-10-04 用户裁定，原为钞票 svg:banknote）
 		//   银行卡 —— 信用卡 + 陶土（同日裁定）：一叠卡比一栋楼更像「卡」；颜色由玫红改陶土
 		//   改种子只影响**新装**；老库那两个账户由 migrateAccountIcons / migrateAccountColor 跟着换。
@@ -608,17 +807,15 @@ async function seedIfEmpty() {
       ('微信', 'svg:message-circle-dots', '${pal('green')}', 0, 1, '${t}'),
       ('支付宝', '', '${pal('blue')}', 0, 2, '${t}'),
       ('现金', 'svg:wallet', '${pal('amber')}', 0, 3, '${t}'),
-      ('银行卡', 'svg:credit-card', '${pal('terracotta')}', 0, 4, '${t}')`)
-		// ★ 必须自己写这两样：initDB 的顺序是「建表 → migrate → seedIfEmpty」，而
-		//   migrateAccountHead / migrateAccountFace 在空库上会先把各自的标记写掉
-		//   （它们按名字找「默认账户」，空库时找不到，但标记照写），之后不会再跑。
-		//   所以置顶（sort=0，上面已给）与身份锚都得由种子负责 —— 不写锚，「默认账户」
-		//   就只是个普通账户，可删可改名，M6 定的「受保护账户」语义就没了。
-		//   按**名字**取 id：账户名有唯一索引，取第一行即所求（与 migrateAccounts 同法）。
-		const [defRow] = await queryRaw(`SELECT id FROM accounts WHERE name = '默认账户'`)
-		if (defRow) {
+      ('银行卡', 'svg:credit-card', '${pal('terracotta')}', 0, 4, '${t}'),
+      ('预付账户', 'svg:hand-coins', '', 0, 5, '${t}')`)
+
+		// 「预付账户」的身份锚（不可编辑、不可删除 —— 收回 / 结清的钱都落在它上面，
+		// 删了功能就断了；见 services/prepay.js）。与手续费分类同一套路。
+		const [prepayRow] = await queryRaw(`SELECT id FROM accounts WHERE name = '预付账户'`)
+		if (prepayRow) {
 			await execRaw(
-				`INSERT OR REPLACE INTO meta (key, value) VALUES ('defaultAccountId', ${esc(String(defRow.id))})`
+				`INSERT OR REPLACE INTO meta (key, value) VALUES ('prepayAccountId', ${esc(String(prepayRow.id))})`
 			)
 		}
 	}
@@ -631,13 +828,30 @@ async function seedIfEmpty() {
 			.join(',')
 		await execRaw(`INSERT INTO categories (name, icon, color, type, sort, created_at) VALUES ${values}`)
 
-		// 「手续费」分类的身份锚（与上面 defaultAccountId 同一套路）。新装走的是这条路
+		// 「手续费」分类的身份锚。新装走的是这条路
 		// （migrateFeeCategory 见到空表就退出，把分类留给这里一次播下），所以锚必须在这儿写
 		// —— 不写的话，新装设备上第一次带手续费的转账会找不到分类，那笔手续费只能挂空。
 		const [feeRow] = await queryRaw(`SELECT id FROM categories WHERE name = '手续费' AND type = 1`)
 		if (feeRow) {
 			await execRaw(
 				`INSERT OR REPLACE INTO meta (key, value) VALUES ('feeCategoryId', ${esc(String(feeRow.id))})`
+			)
+		}
+
+		// 两个「差异调节」的锚，同一个道理（migrateAdjustCategory 见到空表就退出，
+		// 把分类留给这里一次播下，锚不在这儿写就没有）。★ 必须带上 type 找 —— 两侧同名。
+		for (const [type, key] of [[1, 'adjustCategoryIdOut'], [2, 'adjustCategoryIdIn']]) {
+			const [row] = await queryRaw(`SELECT id FROM categories WHERE name = '差异调节' AND type = ${type}`)
+			if (row) {
+				await execRaw(`INSERT OR REPLACE INTO meta (key, value) VALUES (${esc(key)}, ${esc(String(row.id))})`)
+			}
+		}
+
+		// 「预付差额」的锚，同理（migratePrepay 见到空表就退出，把分类留给这里一次播下）
+		const [prepDiffRow] = await queryRaw(`SELECT id FROM categories WHERE name = '预付差额' AND type = 2`)
+		if (prepDiffRow) {
+			await execRaw(
+				`INSERT OR REPLACE INTO meta (key, value) VALUES ('prepayDiffCategoryId', ${esc(String(prepDiffRow.id))})`
 			)
 		}
 	}

@@ -67,17 +67,25 @@ export async function getCategoriesGrouped() {
   const rows = await query(
     'SELECT id, name, icon, color, type, parent_id AS parentId, sort FROM categories ORDER BY type, sort, id'
   )
-  // 「手续费」是转账的内部分类：它由转账**带出来**（saveTransfer 往它上面挂一条支出），
-  // 不该出现在分类管理里，也不该被当作可选支出分类 —— 用户手动选它记一笔，等于凭空造手续费。
+  // 内部件分类：手续费、差异调节（支出侧 / 收入侧）—— 都由内部动作**带出来**
+  // （转账带出手续费，改余额带出差异调节），不该出现在分类管理里，也不该被当作可选项：
+  // 用户手动选「差异调节」记一笔，等于凭空把账做平。
   // 摘的是**这一份列表**，不是数据：categories 表里那行还在，备份、统计、明细都照旧认它。
   // 摘掉节点就够：它下面的子分类会因为「父不存在」被下面的孤儿守卫一并丢弃（真机上不该有，
-  // 但手续费在本轮之前是可见的，别人可能已经给它建过子分类）。
-  const feeId = await getFeeCategoryId()
+  // 但这些分类在本轮之前是可见的，别人可能已经给它们建过子分类）。
+  //
+  // 键名直接读 meta 而不是引 account.js 的 getAdjustCategoryId：分类模块只是在渲染时过滤，
+  // 没必要把「账户」服务拖进依赖图里。
+  const internal = new Set([await getFeeCategoryId()])
+  for (const key of ['adjustCategoryIdOut', 'adjustCategoryIdIn', 'prepayDiffCategoryId']) {
+    const n = Number(await getMeta(key))
+    if (Number.isInteger(n) && n > 0) internal.add(n)
+  }
   const expense = []
   const income = []
   const byId = new Map()
   for (const r of rows) {
-    if (feeId != null && Number(r.id) === feeId) continue
+    if (internal.has(Number(r.id))) continue
     byId.set(Number(r.id), {
       id: Number(r.id),
       name: r.name,

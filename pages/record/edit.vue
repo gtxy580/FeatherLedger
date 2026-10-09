@@ -6,6 +6,14 @@
 				<view :style="maskStyle('x', 44, 'var(--md-on-surface)')"></view>
 			</view>
 			<text class="title">{{ recordId == null ? '记一笔' : '编辑' }}</text>
+			<!-- 预付开关：支出模式下出现（新增与编辑都有 —— 编辑一笔已有的预付时它自动亮起）。
+			     它把这一笔的性质从「花掉了」改成「垫出去了」—— 钱照样从账户扣，但不进支出统计，
+			     而是记进预付账户等着收回来。标题是绝对居中的，这个按钮在不在都不影响它。 -->
+			<view v-if="type === 1" class="pre-btn af-press"
+				:class="{ on: prepay, pressing: isPressed('prepay') }" @touchstart="pressOn('prepay')"
+				@touchend="pressOff" @touchcancel="pressOff" @click="togglePrepay">
+				<text>预付</text>
+			</view>
 		</view>
 
 		<!-- 金额：元直输（用户裁定），显示恒两位小数；灰色小字「元」标单位。
@@ -300,8 +308,8 @@
 						@click="pickAccount(a)">
 						<category-icon :icon="a.icon" :color="a.color" :name="a.name" :size="56" />
 						<text class="ap-name">{{ a.name }}</text>
-						<text class="ap-bal num">{{ fmtYuan(a.balance) }} 元</text>
-						<view v-if="a.id === accountId" class="ap-check" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
+						<text class="ap-bal num" :class="{ neg: a.balance < 0 }">余额 {{ fmtYuan(a.balance) }}</text>
+						<view class="ap-check" :class="{ off: a.id !== accountId }" :style="maskStyle('check', 32, 'var(--md-primary-strong)')"></view>
 					</view>
 				</view>
 				<view class="af-btns">
@@ -329,6 +337,8 @@
 		getNoteStats,
 		MAX_AMOUNT_CENTS
 	} from '@/services/record.js'
+	// 预付：编排（转账 + 以后那几笔收回 / 结清）全在服务层，页面只把几个字段递过去
+	import { createPrepay, updatePrepay, getPrepayRecovered } from '@/services/prepay.js'
 	// 备注候选的排序规则在服务层（纯函数，断言在 scripts/note-repro.mjs）——
 	// 页内只喂数据、不管怎么排
 	import { buildSuggestions } from '@/services/note.js'
@@ -341,7 +351,7 @@
 	} from '@/services/meta.js'
 	import {
 		maskStyle,
-		CATEGORY_ICON_KEYS
+		iconKeysOf
 	} from '@/services/icons.js'
 	import { PALETTE_COLORS, paletteColor as pal } from '@/services/palette.js'
 	import {
@@ -384,6 +394,16 @@
 				toAccountId: null, // 转账的**转入**方。accountId 是转出方，两者不能混用（会互相顶掉）
 				feeInput: '0', // 手续费（元直输，与 amountInput 同一套语义）
 				feeFocused: false, // 键盘当前作用于哪一行：false = 转账金额，true = 手续费
+				// 预付开关（支出模式下可见，新增与编辑都有）：打开后这一笔记成「垫出去」——
+				// 钱从账户扣、进预付账户，**不进支出统计**。切走支出模式时自动关掉。
+				// ★ 编辑一笔已有的预付时它会被自动点亮（那笔底层是转账，但界面上就是一笔支出）
+				prepay: false,
+				// 这笔预付已经收回来的钱（只有编辑预付条时才会非 0）：用它拦住
+				// 「已经收过钱的预付被取消 / 金额改得比它小」—— 那会让账上凭空多出钱
+				prepayRecovered: 0,
+				// warn() 的节流状态（见那个方法）
+				warnMsg: '',
+				warnAt: 0,
 
 				// 金额加减（用户裁定：+ / − 键，金额栏实时算、算式小字在金额上方）。
 				// calcTerms = 算式片段，数与符号交替（如 ['8', '+']），存的是**用户敲的原串**
@@ -415,7 +435,7 @@
 				showAddForm: false,
 				afClosing: false, // 新增子分类卡片正在播放退场动画（showAddForm 撑到播完才清）
 				afTimer: null,
-				afIcon: '', // 新增子分类所选图标（CATEGORY_ICON_KEYS 的 key；空 = 不选，用名称首字）；存库时补 svg: 前缀
+				afIcon: '', // 新增子分类所选图标（iconKeys 里的 key；空 = 不选，用名称首字）；存库时补 svg: 前缀
 				afName: '',
 				afColor: '', // 空串 = 跟随主分类色
 				bornId: null, // 新增成功后播放弹入动画的子分类 id
@@ -524,9 +544,13 @@
 				if (this.curInput()) parts.push(this.curInput())
 				return parts.join(' ')
 			},
-			// 分类图标可选清单（用户裁定 8×3=24，工具图标不进选择器）
+			/**
+			 * 新增子分类的图标宫格摆哪一批 —— 跟着**当前记的是支出还是收入**走。
+			 * 子分类一定挂在所选主分类下，而主分类来自 catList（就是 this.type 那一组），
+			 * 所以 this.type 就是它该用的那一份。转账（3）没有分类，这个卡片根本不会露出来。
+			 */
 			iconKeys() {
-				return CATEGORY_ICON_KEYS
+				return iconKeysOf(this.type)
 			},
 			afColors() {
 				return PALETTE_COLORS
@@ -634,7 +658,13 @@
 						setTimeout(() => uni.navigateBack(), 800)
 						return
 					}
-					this.type = r.type
+					// ★ 预付那一笔在界面上就是**一笔支出**（用户裁定）：它底层是「支出账户 → 预付账户」
+					//   的转账，但用户从不这么看它 —— 打开编辑该是支出模式、右上角「预付」亮着。
+					//   关掉那个开关就等于把它改回一笔普通支出（见 save 的分支）。
+					const isPrepay = Number(r.type) === 3 && r.categoryId != null
+					this.prepay = isPrepay
+					this.type = isPrepay ? 1 : r.type
+					this.prepayRecovered = isPrepay ? await getPrepayRecovered(id) : 0
 					this.accountId = r.accountId // 账户早于分类回填设好：loadAccounts 只在「没选中」时才动它
 					this.toAccountId = r.toAccountId
 					this.feeInput = r.feeAmount ? this.centsToInput(r.feeAmount) : '0'
@@ -786,8 +816,42 @@
 				return s ? s.name : c.name
 			},
 			// 切换收支：两组分类不同，已选与展开内容作废（硬收，不走收回动画）
+			/**
+			 * 弹一条提示，**带节流**。
+			 *
+			 * ★ 为什么要节流：点不动的时候用户一定会**连续点**（想知道是不是没点中），
+			 *   而 App 端的 showToast 每调一次都会**把计时器重新计起** —— 连点三下就是 4.5 秒
+			 *   不消失，看着像个卡住的黑色条。同一个词 1.5 秒内只弹一次，人眼完全够看。
+			 */
+			warn(msg) {
+				const now = Date.now()
+				if (this.warnMsg === msg && now - this.warnAt < 1500) return
+				this.warnAt = now
+				this.warnMsg = msg
+				uni.showToast({ title: msg, icon: 'none' })
+			},
+			/**
+			 * 预付开关。★ 「关掉」要当场拦住已经收回过钱的那笔 —— 不能等保存时才说：
+			 * 开关亮着还是灭着是用户当下的判断依据，等到保存再驳回，前面的操作全白做了。
+			 */
+			togglePrepay() {
+				if (this.prepay && this.prepayRecovered > 0) {
+					this.warn('这笔已经收回过钱，不能取消预付')
+					return
+				}
+				this.prepay = !this.prepay
+			},
 			setType(t) {
 				if (this.type === t) return
+				// ★ 切走支出会**顺带**取消预付，所以同样在这里拦（理由见 togglePrepay 上方那段）。
+				//   拦在改 type 之前：拦完这一笔还是原样，用户看到的是「没切过去」而不是「切过去了又变回来」。
+				if (t !== 1 && this.prepay && this.prepayRecovered > 0) {
+					this.warn(`这笔已经收回过钱，不能改成${t === 2 ? '收入' : '转账'}`)
+					return
+				}
+				// 预付只在支出模式下有意义：切到收入 / 转账就把它关掉，
+				// 免得切回来时它还开着（那会记出一笔用户没打算预付的账）
+				if (t !== 1) this.prepay = false
 				// 换类型也先把算式结算掉（用户裁定）：支出算到一半切收入，结果要落在金额上，
 				// 否则算式跨着类型跑，金额栏显示的数与存进去的对不上
 				this.commitCalc()
@@ -1197,6 +1261,14 @@
 					return
 				}
 				const editing = this.recordId != null
+				// ★ 取消预付的兜底：收了 800 再把它改成普通支出，那 800（内部搬运 + 差额收入）
+				//   就成了没有来历的钱 —— 账面上凭空多出来，明细里没有任何东西解释它。
+				//   togglePrepay / setType 已经在按下时就拦住了，这条是防止将来多出别的路径
+				//   （比如载入时的初始状态被改）绕过它们。
+				if (editing && !this.prepay && this.prepayRecovered > 0) {
+					this.warn('这笔已经收回过钱，不能取消预付')
+					return
+				}
 				const payload = {
 					type: this.type,
 					categoryId: this.pickedSub ? this.pickedSub.id : this.pickedParentId,
@@ -1209,7 +1281,29 @@
 				}
 				this.saving = true
 				try {
-					if (this.type === 3) {
+					if (this.prepay) {
+						// 预付：走这条就**不是**一笔支出 —— 服务层记的是「支出账户 → 预付账户」的转账，
+						// 所以本期支出数字不变，钱在预付账户里等着收回来（见 services/prepay.js）。
+						// 编辑那条路得用 updatePrepay：它要带着分类、还要拦住「金额改得比已收回的还小」
+						await (editing
+							? updatePrepay({
+								id: this.recordId,
+								accountId: this.accountId,
+								categoryId: payload.categoryId,
+								amountCents,
+								date: this.date,
+								time: this.time,
+								note: payload.note
+							})
+							: createPrepay({
+								accountId: this.accountId,
+								categoryId: payload.categoryId,
+								amountCents,
+								date: this.date,
+								time: this.time,
+								note: payload.note
+							}))
+					} else if (this.type === 3) {
 						// 转账：两条记录（转账 + 它那笔手续费）的全部编排都在服务层，
 						// 页面只把六个字段递过去，不碰「手续费行该插还是该改」这类判断
 						await saveTransfer({
@@ -1231,7 +1325,7 @@
 						console.warn('[edit] 记住账户失败（不影响已保存的流水）', e)
 					}
 					uni.showToast({
-						title: editing ? '已保存' : '已记账',
+						title: editing ? '已保存' : this.prepay ? '已记预付' : '已记账',
 						icon: 'success'
 					})
 					setTimeout(() => uni.navigateBack(), 800) // 让 toast 露脸（M2 既有节奏）
@@ -1242,10 +1336,11 @@
 					}, 1500)
 				} catch (e) {
 					console.error('[edit] 保存失败', e)
-					uni.showToast({
-						title: '保存失败',
-						icon: 'none'
-					})
+					// ★ 把**真实原因**说出来。「保存失败」四个字对用户没有任何信息量，
+					//   而这一层的错误几乎都是有具体原因的（金额越界、分类被删、时刻格式…）。
+					//   服务层的报错文案本来就是给用户看的，透传出来即可。
+					const msg = String((e && e.message) || '').replace('SQL执行失败: ', '') || '保存失败'
+					uni.showToast({ title: msg, icon: 'none' })
 					this.saving = false
 				}
 			},
@@ -1300,6 +1395,32 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+	}
+
+	// 顶栏右侧的「预付」开关：宽度与左边的 × 齐（84rpx 高），文字居中。
+	// 打开时换成主题色实底 —— 这一笔的性质变了，得比一个字更显眼。
+	.pre-btn {
+		height: 60rpx;
+		padding: 0 26rpx;
+		border-radius: 999rpx;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: var(--md-surface-container-high);
+
+		text {
+			font-size: 26rpx;
+			font-weight: 600;
+			color: var(--md-on-surface-variant);
+		}
+
+		&.on {
+			background: var(--md-primary);
+
+			text {
+				color: var(--md-on-primary);
+			}
+		}
 	}
 
 
@@ -1896,13 +2017,26 @@
 				color: var(--md-on-surface);
 			}
 
+			// 账户余额。负数（信用卡、透支）走错误色 —— 与首页/分类明细页的筛选弹层、
+			// 账户页那三处同一个 `.neg` 语义，四处一致。
 			.ap-bal {
 				font-size: 26rpx;
 				color: var(--md-on-surface-variant);
+
+				&.neg {
+					color: var(--md-error);
+				}
 			}
 
+			// 勾**恒占位**（未选中的用 visibility 藏起来）—— 它是布局的一部分：
+			// 用 v-if 的话勾一出现就把左边挤窄，余额跟着缩，选中项与未选中项排版不一致。
+			// 与这一页「支出/收入/转账」类型切换那处同一个做法（那边是为了文字不跳动）。
 			.ap-check {
 				flex-shrink: 0;
+
+				&.off {
+					visibility: hidden;
+				}
 			}
 		}
 	}

@@ -4,7 +4,22 @@
 		<view class="dlg-card" :class="{ closing }" @click.stop>
 			<text class="dlg-title">{{ dlgTitle }}</text>
 			<text class="dlg-msg">{{ dlgMessage }}</text>
-			<view class="dlg-btns">
+			<!-- 多选项模式：每条路一个整行按钮（还能各带一行说明），最后再跟一个「取消」。
+			     与下面的两键模式互斥 —— options 为空时走的还是原来的「取消 / 确定」。
+			     为什么取消键**也在列表里**、而不是复用两键那一排：这里点遮罩同样是取消，
+			     若把某个选项摆在「取消」位上，点遮罩会变成选中它（语义就错了）。 -->
+			<view v-if="dlgOptions.length" class="dlg-opts">
+				<view v-for="(o, i) in dlgOptions" :key="i" class="dlg-opt af-press" :class="{ pressing: isPressed('opt' + i) }"
+					@touchstart="pressOn('opt' + i)" @touchend="pressOff" @touchcancel="pressOff" @click="pick(i)">
+					<text class="dlg-opt-text" :class="{ danger: o.danger }">{{ o.text }}</text>
+					<text v-if="o.hint" class="dlg-opt-hint">{{ o.hint }}</text>
+				</view>
+				<view class="dlg-opt af-press" :class="{ pressing: isPressed('optCancel') }" @touchstart="pressOn('optCancel')"
+					@touchend="pressOff" @touchcancel="pressOff" @click="cancel">
+					<text class="dlg-opt-text plain">{{ dlgCancelText }}</text>
+				</view>
+			</view>
+			<view v-else class="dlg-btns">
 				<view v-if="!hideCancel" class="dlg-btn cancel af-press" :class="{ pressing: isPressed('cancel') }" @touchstart="pressOn('cancel')"
 					@touchend="pressOff" @touchcancel="pressOff" @click="cancel">
 					<text>{{ dlgCancelText }}</text>
@@ -38,6 +53,12 @@
 	 * hideCancel：只给一个按钮的「说明型」对话框用（如账户有流水时不能删除）。
 	 * 缺省 false，现有调用方行为不变；此时点遮罩/返回键仍等于取消（关掉对话框）。
 	 *
+	 * options（可选）：多选项模式 —— `[{ text, hint, danger, onPick }]`，每条渲染成一整行的
+	 * 按钮，末尾自动补一个「取消」。用于「同一件事有几条路、任选其一」的场合
+	 * （如改余额：反算期初 / 记一笔调整）。给了 options 就不再渲染「取消 / 确定」那两键。
+	 * ★ 取消键**也在列表里**、不复用那两键的取消位：这里点遮罩等于取消，
+	 *   若把某个选项摆在「取消」位上，点遮罩就会变成选中它（语义就错了）。
+	 *
 	 * 安卓返回键：页面实现 onBackPress，若本组件 visible 则调 cancel() 并 return true
 	 * （返回 true 表示事件已被消费，不退出页面）。
 	 */
@@ -54,6 +75,7 @@
 				dlgCancelText: '取消',
 				danger: false,
 				hideCancel: false,
+				dlgOptions: [],
 				onConfirm: null,
 				onCancel: null,
 				timer: null
@@ -72,6 +94,7 @@
 				this.dlgCancelText = opts.cancelText || '取消'
 				this.danger = !!opts.danger
 				this.hideCancel = !!opts.hideCancel
+				this.dlgOptions = Array.isArray(opts.options) ? opts.options : []
 				this.onConfirm = opts.onConfirm || null
 				this.onCancel = opts.onCancel || null
 				this.visible = true
@@ -99,6 +122,17 @@
 			confirm() {
 				if (!this.visible || this.closing) return
 				const fn = this.onConfirm
+				this.onConfirm = null
+				this.onCancel = null
+				this.close()
+				if (fn) fn()
+			},
+			/** 多选项模式：点中第 i 条。dlgOptions **不在这里清空** —— 清了列表会在退场动画
+			 *  的 180ms 里先空一下，看着像闪了一下；下次 open 自会覆盖。 */
+			pick(i) {
+				if (!this.visible || this.closing) return
+				const opt = this.dlgOptions[i]
+				const fn = opt && opt.onPick
 				this.onConfirm = null
 				this.onCancel = null
 				this.close()
@@ -188,6 +222,49 @@
 		font-size: 27rpx;
 		line-height: 1.5;
 		color: var(--md-on-surface-variant);
+	}
+
+	// 多选项模式：每条一整行，各带一行说明（说明对「选哪条」往往比按钮文字更关键）
+	.dlg-opts {
+		margin-top: 36rpx;
+
+		.dlg-opt {
+			padding: 26rpx 28rpx;
+			border-radius: 28rpx;
+			background: var(--md-surface-container-high);
+
+			// 两行贴在一起会被读成一段，隔一条缝
+			& + .dlg-opt {
+				margin-top: 16rpx;
+			}
+
+			// App 端 text 是行内元素：不显式块级化，标题与说明会挤在同一行
+			text {
+				display: block;
+			}
+		}
+
+		.dlg-opt-text {
+			font-size: 29rpx;
+			font-weight: 600;
+			color: var(--md-primary-strong);
+
+			&.danger {
+				color: var(--md-error);
+			}
+
+			&.plain {
+				font-weight: 500;
+				color: var(--md-on-surface-variant);
+			}
+		}
+
+		.dlg-opt-hint {
+			margin-top: 8rpx;
+			font-size: 24rpx;
+			line-height: 1.45;
+			color: var(--md-on-surface-variant);
+		}
 	}
 
 	.dlg-btns {

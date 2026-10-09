@@ -1,12 +1,14 @@
 {
   "pages": [
-    { "path": "pages/index/index", "style": { "navigationStyle": "custom", "navigationBarTitleText": "飞鸟记账" } },
+    { "path": "pages/index/index", "style": { "navigationStyle": "custom", "navigationBarTitleText": "飞鸟记账", "app-plus": { "bounce": "none" } } },
     { "path": "pages/mine/mine", "style": { "navigationStyle": "custom", "navigationBarTitleText": "我的" } },
     { "path": "pages/record/edit", "style": { "navigationStyle": "custom", "navigationBarTitleText": "记一笔" } },
-    { "path": "pages/record/detail", "style": { "navigationStyle": "custom", "navigationBarTitleText": "分类明细" } },
+    { "path": "pages/record/detail", "style": { "navigationStyle": "custom", "navigationBarTitleText": "分类明细", "app-plus": { "bounce": "none" } } },
     { "path": "pages/theme/theme", "style": { "navigationStyle": "custom", "navigationBarTitleText": "主题色" } },
     { "path": "pages/category/category", "style": { "navigationStyle": "custom", "navigationBarTitleText": "分类管理" } },
     { "path": "pages/account/account", "style": { "navigationStyle": "custom", "navigationBarTitleText": "账户管理" } },
+    { "path": "pages/prepay/prepay", "style": { "navigationStyle": "custom", "navigationBarTitleText": "预付管理", "app-plus": { "bounce": "none" } } },
+    { "path": "pages/prepay/history", "style": { "navigationStyle": "custom", "navigationBarTitleText": "预付历史", "app-plus": { "bounce": "none" } } },
     { "path": "pages/data/data", "style": { "navigationStyle": "custom", "navigationBarTitleText": "数据管理" } },
     { "path": "pages/about/about", "style": { "navigationStyle": "custom", "navigationBarTitleText": "关于本应用" } }
   ],

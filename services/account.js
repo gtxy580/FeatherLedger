@@ -5,8 +5,8 @@
  * 初始余额在 JS 里相加——内存 mock 不解析算术表达式与 COALESCE，加法放 JS
  * 既过得去门禁也更好读（也和分类表的「先查后写」是同一套形态）。
  */
-import { query, exec, esc, now } from './db.js'
-import { getMeta } from './meta.js'
+import { query, exec, esc, now, getAdjustCategoryIds } from './db.js'
+import { getPrepayAccountId } from './prepay.js'
 import { ICONS } from './icons.js'
 import { MAX_AMOUNT_CENTS } from './record.js'
 
@@ -16,17 +16,6 @@ import { MAX_AMOUNT_CENTS } from './record.js'
  * 这类两处走散的问题，而它只会在真机上表现为「保存失败但看不出为什么」。
  */
 export const ACCOUNT_NAME_MAX = 8
-
-/**
- * 「默认账户」的 id——迁移建的那个、老流水的落点。它有两个特权：
- * **排在第一行**（迁移把 sort 置 0）与**不允许删除**。
- * 用 meta 里的 id 而不是名字做锚：账户可以改名，改名不该改变它的身份。
- * @returns {Promise<number|null>}
- */
-async function getDefaultAccountId() {
-  const n = Number(await getMeta('defaultAccountId'))
-  return Number.isInteger(n) && n > 0 ? n : null
-}
 
 /** 名称校验：去空白、非空、≤8 字 */
 function validateName(name) {
@@ -55,6 +44,30 @@ function validateInitialBalance(v) {
   return n
 }
 
+/** 今天 'YYYY-MM-DD'：调整产生的那条流水要落在今天（与记一笔的默认日期同一格式） */
+function todayStr() {
+  const d = new Date()
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+/**
+ * 「差异调节」分类的 id —— 改余额选「记一笔调整」时，差额落在它上面。
+ *
+ * 与「手续费」同一套内部件形态：id 存在 meta 里（迁移 / 播种时写入），分类表里那行是真的
+ * （统计、明细、备份都照旧认它），只是 `getCategoriesGrouped()` 会把它摘掉 ——
+ * 用户手动选到「差异调节」就等于凭空造差额，那不是记账，是把账做平。
+ *
+ * 锚的读法（含「验行还在」那一步）收在 db.js 的 getAdjustCategoryIds —— 写锚的也是它，
+ * 而 record.js 标记调整流水时读的是同一份，三个模块共用一处 key 列表。
+ * @param {number} type 1 = 支出侧（余额调低），2 = 收入侧（余额调高）
+ * @returns {Promise<number|null>}
+ */
+export async function getAdjustCategoryId(type) {
+  const ids = await getAdjustCategoryIds()
+  return type === 2 ? ids.in : ids.out
+}
+
 /** 账户名不得重复；excludeId 用于「改名叫回自己原来的名字」 */
 async function assertNameFree(name, excludeId = null) {
   const exclude = excludeId == null ? '' : ` AND id <> ${excludeId}`
@@ -69,10 +82,20 @@ async function nextSort() {
 }
 
 /**
- * 账户列表 + 实时余额，按 sort, id 升序（默认账户 sort=0，因此恒排第一）。
- * @returns {Promise<Array<{id: number, name: string, icon: string, color: string, initialBalance: number, sort: number, canDelete: boolean, balance: number}>>} 金额均为分
+ * 账户列表 + 实时余额，按 sort, id 升序。
+ *
+ * ★ 2026-10-09 起没有「受保护的默认账户」了：名称 / 图标 / 颜色 / 排序 / 删除统统可以
+ *   （用户裁定）。唯一的护栏是「至少要留一个预付账户以外、且不是最后一个」（见 deleteAccount）。
+ *
+ * ★ **预付账户不在这里出现**（用户裁定）：它是预付功能的内部落点，不是用户的钱包 ——
+ *   账户管理、记账页的账户选择、首页的账户筛选都不该看到它。要看垫出去多少，走
+ *   「预付管理」（它读的是 services/prepay.js 的 listPendingPrepays）。
+ *   同一个理由，它的余额也**不计入总资产**（见 getTotalAssets）—— 垫出去的钱已经花掉了。
+ *
+ * @returns {Promise<Array<{id: number, name: string, icon: string, color: string, initialBalance: number, sort: number, balance: number}>>} 金额均为分
  */
 export async function listAccounts() {
+  const prepayId = await getPrepayAccountId()
   const rows = await query(
     `SELECT a.id AS id, a.name AS name, a.icon AS icon, a.color AS color, a.sort AS sort,
       a.initial_balance AS initialBalance,
@@ -84,6 +107,12 @@ export async function listAccounts() {
     GROUP BY a.id
     ORDER BY a.sort, a.id`
   )
+  // 预付账户在这里、用 JS 滤掉，**不能写进上面的 WHERE** —— 内存 mock 的 WHERE 是在
+  // 「各表列拍平之后」求值的（不带别名信息），`a.id` 会取到 **records 的 id**（同名列后者覆盖）。
+  // 真机上 `WHERE a.id <> 6` 完全正确，脚本里却会顺手滤掉「id 恰好等于 6」的那条流水 ——
+  // 2026-10-09 就因此让「改余额后余额应该是 5000」变成 700（那条调整流水的 id 也正好是 6）。
+  // 投影阶段反倒是对的（那里走 aliasRows），所以拿到行之后再滤是安全的。
+  const kept = prepayId == null ? rows : rows.filter((r) => Number(r.id) !== prepayId)
   // 转账**转入**的那一半必须单独查：上面那条 JOIN 只连得上「这个账户是转出方」的流水，
   // 只作收款方的账户一行都连不到（transferIn 会恒为 0）。
   //
@@ -101,18 +130,13 @@ export async function listAccounts() {
   for (const r of inRows) {
     if (r.accountId != null) transferInOf.set(Number(r.accountId), Number(r.transferIn || 0))
   }
-  const defId = await getDefaultAccountId()
-  return rows.map((r) => ({
+  return kept.map((r) => ({
     id: Number(r.id),
     name: r.name,
     icon: r.icon || '',
     color: r.color || '',
     initialBalance: Number(r.initialBalance || 0),
     sort: Number(r.sort || 0),
-    // 默认账户不给删：页面据此不渲染删除按钮，服务层另有硬拦（见 deleteAccount）
-    canDelete: Number(r.id) !== defId,
-    // 默认账户的名字也不给改：页面据此锁死名称输入框，服务层同样另有硬拦（见 updateAccount）
-    isDefault: Number(r.id) === defId,
     // 收支各聚合一次（与 getMonthlyData 同一套 SUM(CASE … ELSE 0) 写法），余额在 JS 里加减：
     // 一笔流水都没有的账户两个 SUM 都恒为 0（走 ELSE 0 分支，不是 NULL），
     // 于是余额 = 初始余额——这才是「没有流水」的正确读数，不是 0、也不会消失
@@ -145,8 +169,11 @@ export async function getAccount(id) {
 }
 
 /**
- * 总资产 = 各账户余额之和（含初始余额）。
- * 复用 listAccounts 而不是再写一条聚合 SQL：两处口径永远一致。
+ * 总资产 = 各账户余额之和（含初始余额），**不含预付账户**。
+ *
+ * 复用 listAccounts 而不是再写一条聚合 SQL：两处口径永远一致 —— 而 listAccounts 已经把
+ * 预付账户滤掉了，于是「总资产」与「用户能看见的那几个账户加起来」自动对得上。
+ * （用户裁定：垫出去的钱不计入总资产 —— 它已经花掉了，回不回来是另一回事。）
  * @returns {Promise<number>} 分
  */
 export async function getTotalAssets() {
@@ -188,38 +215,69 @@ export async function addAccount({ name, icon = '', color = '', initialBalance =
 }
 
 /**
- * 修改账户的名称 / 图标 / 底色 / 初始余额。改初始余额会立刻改变余额，但不碰任何历史流水。
+ * 修改账户的名称 / 图标 / 底色 / **当前余额**。
+ *
+ * ★ 2026-10-09 起，编辑时填的是**当前余额**而不是初始余额（用户裁定：初始余额只在新增账户
+ *   时填一次）。余额 = 初始余额 + 流水净额，所以「把余额改成 X」有两条路，由 mode 选：
+ *
+ *   - `'initial'`（默认）：**不产生任何流水**，反算初始余额。
+ *     新初始 = 目标余额 − 流水净额。用户眼里「我账上就是这么多」，明细一条不多。
+ *   - `'adjust'`：**期初一动不动**，多记一条真实流水，差额挂在内部的「差异调节」分类上。
+ *     余额调高记收入、调低记支出，于是差额进了收支统计（这是两种方式唯一的可见区别）。
+ *
+ * 余额没变时两条路都什么都不做（既不写流水也不动期初）—— 否则「改个名字」会凭空多一笔。
  * @param {number} id
- * @param {Object} data 同 addAccount 的载荷
+ * @param {Object} data 同 addAccount 的载荷，但 `balance`（分）是**目标余额**
+ * @param {'initial'|'adjust'} [data.mode] 改余额的方式，默认反算期初
  */
-export async function updateAccount(id, { name, icon = '', color = '', initialBalance = 0 }) {
+export async function updateAccount(id, { name, icon = '', color = '', balance, mode = 'initial' }) {
   if (!Number.isInteger(id)) throw new Error('无效的账户 id')
+  if (mode !== 'initial' && mode !== 'adjust') throw new Error('改余额的方式只能是 initial 或 adjust')
   const n = validateName(name)
   const ic = validateIcon(icon)
   const col = String(color || '').trim()
-  const bal = validateInitialBalance(initialBalance)
-  const rows = await query(`SELECT id, name, icon, color FROM accounts WHERE id = ${id}`)
+  // ★ 不传 balance = **不动余额**。不能给它一个 0 的默认值：那样「只改个名字」会把余额清零，
+  //   而这是全静默的 —— 用户看到的是「我改了名，钱没了」。要动余额就得明说要改成多少。
+  const target = balance == null ? null : validateInitialBalance(balance)
+  const rows = await query(`SELECT id, name, icon, color, initial_balance FROM accounts WHERE id = ${id}`)
   if (!rows.length) throw new Error('账户不存在')
-  // 「默认账户」是固定身份（用户裁定）：名称、图标、底色都不许改，只有初始余额可改。
-  // 外观（home + 灰）由 db.js 的 migrateAccountFace 钉住，页面也不再渲染这两个入口。
-  if (id === (await getDefaultAccountId())) {
-    if (n !== rows[0].name) throw new Error('默认账户的名称不可修改')
-    if (ic !== (rows[0].icon || '') || col !== (rows[0].color || '')) {
-      throw new Error('默认账户的图标与颜色不可修改')
-    }
-  }
+  // ★ 「预付账户」是预付功能的落点（收回 / 结清的钱都记在它名下），**不可编辑、不可删除**
+  //   （用户裁定 2026-10-09）。它和「默认账户」不是一回事 —— 那个只是老流水的落点，
+  //   改不改都不影响功能；这个改了就真的断了。
+  if (id === (await getPrepayAccountId())) throw new Error('预付账户不能修改')
   await assertNameFree(n, id)
+
+  // 用 listAccounts 拿当前余额（而不是自己再拼一遍 SUM）：余额公式只此一处，
+  // 两处口径一旦走散，就会出现「页面显示的余额」与「改余额时反算用的余额」对不上。
+  const cur = (await listAccounts()).find((a) => a.id === id)
+  const flow = cur.balance - cur.initialBalance // 流水净额（收入 − 支出 ± 转账）
+  const diff = target == null ? 0 : target - cur.balance // 这次要把余额挪多少
+
+  let nextInit = Number(rows[0].initial_balance || 0) // adjust 与「不动余额」两种情况下期初原样写回
+  if (mode === 'initial') {
+    if (target != null) nextInit = validateInitialBalance(target - flow) // 目标 − 流水净额
+  } else if (diff !== 0) {
+    // 余额变多 = 一笔收入，变少 = 一笔支出；分类走对应那一侧的「差异调节」
+    const type = diff > 0 ? 2 : 1
+    const cid = await getAdjustCategoryId(type)
+    if (cid == null) throw new Error('找不到「差异调节」分类，改余额失败')
+    await exec(
+      `INSERT INTO records (type, account_id, to_account_id, category_id, amount, note, date, time, created_at)
+       VALUES (${type}, ${id}, NULL, ${cid}, ${Math.abs(diff)}, '', ${esc(todayStr())}, '', ${esc(now())})`
+    )
+  }
+
   await exec(
     `UPDATE accounts SET name = ${esc(n)}, icon = ${esc(ic)}, color = ${esc(col)},
-     initial_balance = ${bal} WHERE id = ${id}`
+     initial_balance = ${nextInit} WHERE id = ${id}`
   )
 }
 
 /**
- * 账户上下移一格。默认账户恒排首位（sort=0），不参与排序。
+ * 账户上下移一格。**所有账户一视同仁**（2026-10-09 起没有「默认账户恒在首位」了）。
  *
  * 与分类同一手法：**不交换两个 sort 值**——历史数据里可能有并列（相等就换了个寂寞），
- * 改成把「可排序账户」整段重写成 1..n，与历史数据无关地正确；默认账户的 0 因此恒在前。
+ * 改成把整段重写成 1..n，与历史数据无关地正确。
  * @param {number} id
  * @param {-1|1} dir -1=上移 1=下移；已在首/末位时静默返回
  */
@@ -228,12 +286,8 @@ export async function moveAccount(id, dir) {
   if (dir !== -1 && dir !== 1) throw new Error('dir 必须是 -1 或 1')
   const rows = await query(`SELECT id FROM accounts WHERE id = ${id}`)
   if (!rows.length) throw new Error('账户不存在')
-  const defId = await getDefaultAccountId()
-  if (id === defId) throw new Error('默认账户固定排在第一行')
 
-  // 别写成 `WHERE 1 = 1`：内存 mock 的条件求值不支持恒真式，会把整表过滤成空
-  const notDef = defId == null ? '' : ` WHERE id <> ${defId}`
-  const sibs = await query(`SELECT id FROM accounts${notDef} ORDER BY sort, id`)
+  const sibs = await query('SELECT id FROM accounts ORDER BY sort, id')
   const idx = sibs.findIndex((r) => Number(r.id) === id)
   const target = idx + dir
   if (idx < 0 || target < 0 || target >= sibs.length) return // 越界：静默
@@ -251,14 +305,17 @@ export async function moveAccount(id, dir) {
  * 删除账户。两道拦截，**与分类的「级联删除」相反**：
  * 账户是余额口径的一侧，留一条指向不存在账户的流水会同时打掉
  * 「每笔流水必有账户」与「总资产 = 各账户余额之和」两个不变量。
+ *
+ * ★ 2026-10-09 起「默认账户」也能删了（用户裁定：它不该是个有特权的身份）。
+ *   但「至少留一个」照旧 —— 删光了记一笔就没有账户可选，那页直接没法用。
  * @param {number} id
  */
 export async function deleteAccount(id) {
   if (!Number.isInteger(id)) throw new Error('无效的账户 id')
   const rows = await query(`SELECT id FROM accounts WHERE id = ${id}`)
   if (!rows.length) throw new Error('账户不存在')
-  // 「默认账户」先判、且与有没有流水无关：这是身份问题（老流水的落点），不是一个可协商的条件
-  if (id === (await getDefaultAccountId())) throw new Error('默认账户不能删除')
+  // 预付账户先判、且与有没有流水无关：这是**功能问题**，不是一个可协商的条件
+  if (id === (await getPrepayAccountId())) throw new Error('预付账户不能删除')
   const n = await countRecordsByAccount(id)
   if (n > 0) throw new Error(`该账户还有 ${n} 笔流水，不能删除`)
   const [total] = await query('SELECT COUNT(*) AS c FROM accounts')

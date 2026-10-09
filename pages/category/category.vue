@@ -167,7 +167,7 @@
 	} from '@/services/category.js'
 	import {
 		maskStyle,
-		CATEGORY_ICON_KEYS
+		iconKeysOf
 	} from '@/services/icons.js'
 	import {
 		PALETTE_COLORS,
@@ -234,8 +234,9 @@
 			nameCount() {
 				return this.edName.length
 			},
+			/** 图标宫格摆哪一批：跟着当前 tab 走（支出 / 收入各一份，见 icons.js 的 iconKeysOf） */
 			iconKeys() {
-				return CATEGORY_ICON_KEYS
+				return iconKeysOf(this.type)
 			},
 			afColors() {
 				return PALETTE_COLORS
