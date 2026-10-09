@@ -104,8 +104,10 @@
 
 			<!-- **只有这一块滚**。列表到底由 scroll-view 自己的 scrolltolower 触发 ——
 			     页头已经不参与滚动了，页面的 onReachBottom 因此永远不会响 -->
+			<!-- ★ scroll-with-animation 跟着「这一趟是哪种滚动」走（见 scrollAnimated）：
+			     换期回顶要**瞬间**到位（用户裁定：不要滚动过程），滚到某天才有滚动过程 -->
 			<scroll-view v-else class="list-body" :scroll-y="listScrollable" :scroll-top="scrollTop"
-				:scroll-into-view="scrollIntoView" scroll-with-animation @scroll="onListScroll"
+				:scroll-into-view="scrollIntoView" :scroll-with-animation="scrollAnimated" @scroll="onListScroll"
 				@scrolltolower="onListLower">
 			<!-- 包裹层：measureList() 靠它量「内容总高」—— 列表顶层是多个 .group，
 			     没有这么一个统一的父节点，就只能去猜「最后一个节点是谁」 -->
@@ -412,7 +414,12 @@
 				ppTimer: null,
 				// 滚到哪一组（形如 'g-2026-10-15'）。★ 只在「点日历」时设，用户一动手指就清掉 ——
 				// 不清的话，之后任何一次重渲染都会把列表拽回那一天
-				scrollIntoView: ''
+				scrollIntoView: '',
+				// 这一趟滚动要不要动画：换期回顶 = 不要（用户裁定），「滚到某天」= 要。
+				// ★ scroll-with-animation 是**滚动容器**的属性、不是每次调用的参数，
+				//   所以只能按趟切换；切换与滚动指令分两个 tick（见 load / scrollToDay），
+				//   否则容器可能在同一个 patch 里先看到滚动、后看到开关
+				scrollAnimated: false
 			}
 		},
 		computed: {
@@ -692,7 +699,8 @@
 				const changed = this.month !== toMonth
 				if (changed) this.month = toMonth
 				this.closePeriodPicker()
-				if (changed) await this.load()
+				// ★ 告诉 load "这趟紧接着要滚到某天"，它就不会先把我送回顶部
+				if (changed) await this.load({ jumpToDay: true })
 				this.scrollToDay(key)
 			},
 			/**
@@ -717,6 +725,8 @@
 				// 否则 rows 会一路加到全量，白白把整期都渲染出来
 				if (!hit) return
 				if (rows > this.shownRows) this.shownRows = rows
+				// 「滚到某天」这一趟**要**滚动过程：几百行的跳跃，动画才看得出来是"过去了"
+				this.scrollAnimated = true
 				this.$nextTick(() => { this.scrollIntoView = 'g-' + dateKey })
 			},
 			/** 用户自己一滚，就清掉「滚到某天」的指令（留着的话下次重渲染会被拽回去） */
@@ -763,7 +773,7 @@
 			acctOf(id) {
 				return this.acctTotals.find((x) => x.id === id) || { income: 0, expense: 0 }
 			},
-			async load() {
+			async load(opts = {}) {
 				const token = ++this.loadToken
 				try {
 					const period = this.periodRange()
@@ -806,8 +816,17 @@
 						this.loadKey = key
 						this.shownRows = LAZY_ROWS
 						// 换了期间就回到列表顶部。scroll-view 只在值**变化**时响应，
-						// 所以在 0 上再设一次 0 是没用的 —— 先抖半像素，人眼看不出来
-						this.scrollTop = this.scrollTop === 0 ? 0.5 : 0
+						// 所以在 0 上再设一次 0 是没用的 —— 先抖半像素，人眼看不出来。
+						// ★ 这一趟要**瞬间**到位（用户裁定：不要滚动过程）：先关掉动画，
+						//   下一个 tick 再抖 —— 分两个 tick 才能保证容器收到 scrollTop 变化时
+						//   scroll-with-animation 已经是 false
+						// ★ 紧接着要「滚到某天」的那一趟**不回顶**（opts.jumpToDay 就是那个信号）：
+						//   回顶再滚下去，人看到的是先闪回顶部、再往下走一趟，多余且难看；
+						//   而"滚到某天"本来就会把列表摆到那一天
+						if (!opts.jumpToDay) {
+							this.scrollAnimated = false
+							this.$nextTick(() => { this.scrollTop = this.scrollTop === 0 ? 0.5 : 0 })
+						}
 					}
 					this.summary = {
 						income: data.income,
