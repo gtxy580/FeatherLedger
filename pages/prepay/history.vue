@@ -55,11 +55,12 @@
            ★ 别再往这里塞固定高度：锁成「测量那一瞬的内容高」的话，长按展开
              「取消结清」把卡片撑高，多出来的那段就直接被裁掉 -->
       <scroll-view v-else class="list-body" :scroll-y="listScrollable" :scroll-top="scrollTop"
+        :scroll-into-view="scrollIntoView" scroll-with-animation @scroll="onListScroll"
         @scrolltolower="onListLower">
       <view class="list">
         <!-- 长按一张卡 → 它下面滑出「取消结清」（再长按 / 点别处收起）。
              卡片本身没有点击行为，所以长按不会和别的操作打架 -->
-        <view v-for="p in visibleItems" :key="p.id" class="card" @longpress="actOn(p.id)">
+        <view v-for="p in visibleItems" :key="p.id" :id="'c-' + p.date" class="card" @longpress="actOn(p.id)">
           <view class="c-head">
             <category-icon :icon="p.categoryIcon" :color="p.categoryColor" :name="p.categoryName" :size="76" />
             <view class="c-txt">
@@ -93,20 +94,16 @@
       </scroll-view>
     </template>
 
-    <!-- 月份滚轮：一列，「结清那笔垫付的日子」按它筛 -->
+    <!-- 期间切换：日历（月态弹月历、年态弹年历）。这里原来是滚轮 -->
     <view v-if="showPicker" class="af-scrim" :class="{ closing: pkClosing }" @click="closePicker">
       <view class="af-blocker"></view>
       <view class="af-card" :class="{ closing: pkClosing }" @click.stop>
         <view class="af-grab"></view>
-        <text class="af-title">选择月份</text>
-        <picker-view class="pv-view" :value="[pkIndex]" indicator-style="height: 88rpx;" @change="onPickerChange">
-          <picker-view-column>
-            <view v-for="m in pkList" :key="m.key" class="pv-item"><text>{{ m.label }}</text></view>
-          </picker-view-column>
-        </picker-view>
+        <period-calendar :mode="mode" :year="calYear" :month="calMonth" :today="todayStr"
+          :values="periodValues" @pick="onCalendarPick" />
         <view class="af-btns">
           <view class="af-cancel af-press" :class="{ pressing: isPressed('pk') }" @touchstart="pressOn('pk')"
-            @touchend="pressOff" @touchcancel="pressOff" @click="closePicker"><text>完成</text></view>
+            @touchend="pressOff" @touchcancel="pressOff" @click="closePicker"><text>取消</text></view>
         </view>
       </view>
     </view>
@@ -121,14 +118,14 @@ import { listSettledPrepays, unsettlePrepay } from '@/services/prepay.js'
 import { fmtYuan } from '@/services/format.js'
 import { maskStyle } from '@/services/icons.js'
 import pressFx from '@/services/press.js'
+import PeriodCalendar from '@/components/period-calendar/period-calendar.vue'
+import { sumByDay, todayKey } from '@/services/calendar.js'
 
-/** 滚轮里给几个月 / 几年：两年足够翻到任何一笔现实里的预付 */
-const MONTH_SPAN = 24
-const YEAR_SPAN = 6
 // 列表懒加载：首屏只渲染这么多张卡，滚到底再补一批（与首页/分类明细同一套）
 const LAZY_ROWS = 60
 
 export default {
+  components: { PeriodCalendar },
   mixins: [pressFx],
   data() {
     return {
@@ -160,36 +157,38 @@ export default {
       showPicker: false,
       pkClosing: false,
       pkTimer: null,
-      pkIndex: 0,
+      // 滚到哪张卡（形如 'c-2026-10-09'）。★ 只在「点日历」时设，用户一动手指就清掉 ——
+      // 不清的话，之后任何一次重渲染都会把列表拽回那天
+      scrollIntoView: '',
     }
   },
   computed: {
-    /** 最近 MONTH_SPAN 个月（含当月），倒序：滚轮第一项就是最近的那个月 */
-    months() {
-      const out = []
-      const d = new Date()
-      for (let i = 0; i < MONTH_SPAN; i++) {
-        const dt = new Date(d.getFullYear(), d.getMonth() - i, 1)
-        const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`
-        out.push({ key, label: `${dt.getFullYear()}年${dt.getMonth() + 1}月` })
-      }
-      return out
+    /** 点期次时弹的日历看哪一期 */
+    calYear() {
+      return this.mode === 'year' ? this.year : Number(this.month.slice(0, 4))
     },
-    /** 最近 YEAR_SPAN 年（含当年），倒序 —— 与 months 同一套形状，滚轮直接复用 */
-    years() {
-      const out = []
-      const y = new Date().getFullYear()
-      for (let i = 0; i < YEAR_SPAN; i++) out.push({ key: String(y - i), label: `${y - i}年` })
-      return out
+    calMonth() {
+      return Number(this.month.slice(5, 7)) || 1
     },
-    /** 滚轮里的那一列：跟粒度走 */
-    pkList() {
-      return this.mode === 'year' ? this.years : this.months
+    /** 只有月态画「今天」那一圈（年态没有「天」这个格子） */
+    todayStr() {
+      return this.mode === 'year' ? '' : todayKey()
+    },
+    /**
+     * 喂给日历的每格数字：那天**结清的预付差额合计**（分）。
+     *
+     * ★ 用 `remaining`（= 垫付 − 收回）而不是 `amount`，是为了**与顶上那行汇总同口径** ——
+     *   它说的就是这个数（「未收回 X」）。口径不一致的话，卡片上的数和日历里的数会对不上。
+     * ★ 同一天可能结清好几笔，所以靠 sumByDay **累加**。
+     * ★ 用全量 items，不是 visibleItems（后者是懒加载切过的）。
+     */
+    periodValues() {
+      return sumByDay(this.items, (p) => p.date, (p) => p.remaining)
     },
     periodLabel() {
       if (this.mode === 'year') return `${this.year}年`
-      const m = this.months.find((x) => x.key === this.month)
-      return m ? m.label : this.month
+      const [y, m] = (this.month || '').split('-')
+      return m ? `${y}年${Number(m)}月` : ''
     },
     /**
      * 汇总那一句：说的是**净额** = 收回 − 垫付。
@@ -381,14 +380,48 @@ export default {
       if (p.note) parts.push(p.note)
       return parts.join(' · ')
     },
-    // ---- 月份滚轮 ----
+    // ---- 期间切换：点期次弹日历（这里原来是滚轮）----
     openPicker() {
-      // 打开时把滚轮停在当前选中的那一格（换粒度后 pkList 也换了，所以每次都要重算）
-      const key = this.mode === 'year' ? String(this.year) : this.month
-      const i = this.pkList.findIndex((m) => m.key === key)
-      this.pkIndex = i < 0 ? 0 : i
       this.pkClosing = false
       this.showPicker = true
+    },
+    /**
+     * 点日历上的一格（月态 'YYYY-MM-DD'、年态 'YYYY-MM'）。
+     * 与首页同一套：换期要重查，然后滚到那天的第一张卡。
+     */
+    async onCalendarPick(key) {
+      if (this.mode === 'year') {
+        // 年态点某月 → 切到月视角看那个月（与首页同规）
+        this.month = key
+        this.year = Number(key.slice(0, 4))
+        this.mode = 'month'
+        this.closePicker()
+        await this.load()
+        return
+      }
+      const toMonth = key.slice(0, 7)
+      const changed = this.month !== toMonth
+      if (changed) this.month = toMonth
+      this.closePicker()
+      if (changed) await this.load()
+      this.scrollToDay(key)
+    },
+    /**
+     * 滚到那天的第一张卡。★ 与首页同一个道理：**必须先把目标渲染出来** ——
+     * 列表是懒加载切片的（visibleItems），节点不在时 scroll-into-view 会静默失败。
+     */
+    scrollToDay(dateKey) {
+      let i = 0
+      for (const p of this.items) {
+        i++
+        if (p.date === dateKey) break
+      }
+      if (i > this.shownRows) this.shownRows = i
+      this.$nextTick(() => { this.scrollIntoView = 'c-' + dateKey })
+    },
+    /** 用户自己一滚，就清掉「滚到某天」的指令 */
+    onListScroll() {
+      if (this.scrollIntoView) this.scrollIntoView = ''
     },
     closePicker() {
       if (!this.showPicker || this.pkClosing) return
@@ -398,20 +431,6 @@ export default {
         this.pkClosing = false
         this.pkTimer = null
       }, 200)
-    },
-    /** 滚轮停在哪就是哪个月（不做「确定」按钮：滚轮停下即所见，再点一次完成很啰嗦） */
-    onPickerChange(e) {
-      const i = Number(e.detail.value[0])
-      const item = this.pkList[i]
-      if (!item) return
-      if (this.mode === 'year') {
-        if (Number(item.key) === this.year) return
-        this.year = Number(item.key)
-      } else {
-        if (item.key === this.month) return
-        this.month = item.key
-      }
-      this.load()
     }
   }
 }
@@ -714,20 +733,4 @@ page {
   color: var(--md-on-surface-variant);
 }
 
-.pv-view {
-  width: 100%;
-  height: 440rpx;
-}
-
-.pv-item {
-  height: 88rpx; // 与 indicator-style 的高度同一个数，选中槽才对得上
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  text {
-    font-size: 30rpx;
-    color: var(--md-on-surface);
-  }
-}
 </style>
