@@ -19,7 +19,8 @@
 		<!-- 格子：月态 7 列 × 6 行，年态 3 列 × 4 行 -->
 		<view class="pc-grid" :class="mode" :style="gridStyle">
 			<view v-for="c in cells" :key="c.key" class="pc-cell"
-				:class="{ dim: !c.current, today: c.isToday, future: c.future }" @click="pick(c)">
+				:class="{ dim: !c.current, today: c.isToday, future: c.future, pressing: isPressed(c.key) }"
+				@touchstart="onCellDown(c)" @touchend="pressOff" @touchcancel="pressOff" @click="pick(c)">
 				<text class="pc-d">{{ c.label }}</text>
 				<text class="pc-e num">{{ c.expenseText }}</text>
 				<text class="pc-i num">{{ c.incomeText }}</text>
@@ -30,15 +31,18 @@
 
 <script>
 import {
-	monthCells, yearCells, cellLine, rowGap, isFuture, currentPeriod, todayKey, canGoForward
+	monthCells, yearCells, cellLine, rowGap, isFuture, currentPeriod, todayKey,
+	canGoForward, canPickCell
 } from '@/services/calendar.js'
 import { maskStyle } from '@/services/icons.js'
+import pressFx from '@/services/press.js'
 
 // 周一起头是中文习惯（列对齐靠 grid 的等分，不靠这七个字的宽度）
 const WEEK = ['一', '二', '三', '四', '五', '六', '日']
 
 export default {
 	name: 'period-calendar',
+	mixins: [pressFx], // 按下反馈（项目不用 :active，webview 对它的触发时机不稳）
 	props: {
 		mode: { type: String, default: 'month' }, // 'month' | 'year'
 		// ★ 组件**不自持期间**：它画的永远是「页面当前那一期」。
@@ -114,20 +118,13 @@ export default {
 			// 走同一个 shiftPeriod（换期 + 重查）。所以翻到哪期，格子里的数就是哪期的
 			this.$emit('shift', delta)
 		},
-		/**
-		 * 点了某一格。有两类格子点不动（都拦在这里，两个页面就不用各写一遍）：
-		 *
-		 * ① **还没到的**（与 › 置灰同一条裁定）：月历**永远**带着下个月那几格
-		 *    （42 − 本月天数 − 前面垫的 ≥ 5），年历在当前年份里 12 个月都在；还有本月内
-		 *    今天之后的那几天 —— 不拦就一步跳进还没到的空期间。
-		 * ② **当期里没有流水的那些天**（用户裁定：点了不跳转）—— 那天没账可看，跳过去
-		 *    也是空的，白把弹层关了。
-		 *    ★ 只拦**当期**的格子：前后月那几格的流水不在 values 里（那是别的期间的数据），
-		 *      而点它们本来就是"翻到那个月"的指令，不是"看那一天"，照旧放行。
-		 */
+		/** 手指按下：**只给会跳的格子**深色反馈（用户裁定："不跳转就不要"） */
+		onCellDown(c) {
+			if (canPickCell(c, this.isYear)) this.pressOn(c.key)
+		},
+		/** 手指抬起（或划走）：真的跳。能不能跳见 canPickCell —— 与按下反馈同一把尺子 */
 		pick(c) {
-			if (c.future) return
-			if (!this.isYear && c.current && !c.hasData) return
+			if (!canPickCell(c, this.isYear)) return
 			this.$emit('pick', c.key)
 		}
 	}
@@ -199,6 +196,10 @@ export default {
 	min-height: 104rpx;
 	border-radius: 16rpx;
 	background: var(--md-surface-container);
+	// 按下反馈走的是换底（不是 .af-press 的缩放）——所以 transition 也得写在这儿：
+	// App.vue 那份 .af-press 只管 transform，挂上它反而会被页面样式整条盖掉。
+	// 0.08s 与 .af-press 同档：再慢就从"手感"变成"动画"了
+	transition: background-color 0.08s ease-out;
 
 	// 前后月的格子淡下去 —— 但**仍然可点**：点它就是翻月（见父级的 pick 处理）
 	&.dim {
@@ -218,6 +219,13 @@ export default {
 	&.future {
 		opacity: 0.3;
 		background: transparent;
+	}
+
+	// 按住：底深一档（用主题里现成的那两档，不新造颜色）。
+	// ★ 只有**会跳**的格子会进这个态（见 onCellDown）—— 按下去变深、松手却什么都不发生，
+	//   比全程没反馈更糟。写在最后，免得被上面两条的 background 盖掉
+	&.pressing {
+		background: var(--md-surface-container-highest);
 	}
 }
 

@@ -85,6 +85,27 @@ export function yearCells(year) {
 }
 
 /**
+ * 这一格点了会不会真的跳。
+ *
+ * ★ **按下反馈与跳转必须共用这一个判据** —— 各判各的就会出现"按下去变深了、
+ *   松手却什么都没发生"（用户裁定：不跳转的格子就不要反馈）。
+ *
+ * 两条拦路虎：
+ *   ① **还没到的**（future）：月历永远带着下个月那几格、年历在当前年份 12 个月都在
+ *   ② 月态里**当期没有流水的那些天**：没账可看，跳过去也是空的
+ *      ★ 年态不拦这个 —— 点一个空月份是"切到那个月看看"，那是个正当去处
+ *      ★ 月态也不拦前后月那几格：它们说的是"翻到那个月"，不是"看那一天"
+ *
+ * @param {{future: boolean, current: boolean, hasData: boolean}} cell 组件算出来的格子
+ * @param {boolean} isYear
+ */
+export function canPickCell(cell, isYear) {
+  if (cell.future) return false
+  if (!isYear && cell.current && !cell.hasData) return false
+  return true
+}
+
+/**
  * 页面把「某一天的数」喂给日历时，该挂在哪把 key 上。
  *
  * ★ 必须与**格子的 key 同形**：月态按天（'YYYY-MM-DD'）、年态按月（'YYYY-MM'）。
