@@ -1085,14 +1085,17 @@ export default {
 }
 
 /* 点按读出行：日期 + 本期 + 上期。
-   ★ 高度**写死**、始终占位 —— 选中前后不能变高，否则点一下整块图往下跳 */
+   ★ 高度**写死**、始终占位 —— 选中前后不能变高，否则点一下整块图往下跳。
+   ★ 它夹在节标题与绘图区之间，所以上下间距按本面板那把尺子取：
+     标题→它 = 28rpx（「标题→内容」），它→绘图区 = 20rpx（「行与行」，见 .sp-chart）。
+     （`.sp-sec-head` 自己没有下边距 —— 这一块的间距一向由"下一个元素的上边距"给） */
 .sp-pick {
   display: flex;
   align-items: baseline;
   gap: 28rpx;
   height: 44rpx;
   line-height: 44rpx;
-  margin-bottom: 8rpx;
+  margin-top: 28rpx;
 
   .sp-pick-d {
     font-size: 24rpx;
@@ -1160,8 +1163,10 @@ export default {
   display: flex;
   align-items: stretch;
   // 左侧出血到卡片边缘、右侧保持卡片内边距：折线起点因此更靠页面左边（用户反馈太远），
-  // 同时右端与其它内容对齐
-  margin: 36rpx -32rpx 0;
+  // 同时右端与其它内容对齐。
+  // ★ 上边距从 36（「标题→绘图区」那一档）改成 20（「行与行」）—— 中间多了点按读出行
+  //   那一行，36 已经由它承担了（见 .sp-pick）
+  margin: 20rpx -32rpx 0;
   padding-right: 32rpx;
 }
 
