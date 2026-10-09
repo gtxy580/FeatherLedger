@@ -84,16 +84,19 @@ export function currentPeriod() {
 }
 
 /**
- * 这一格是不是**未来期间**。
+ * 这一格是不是**还没到** —— 还没到的格子不给选（与 › 置灰同一条裁定）。
  *
- * 月态的格子给的是完整日期（'YYYY-MM-DD'）、年态给的是 'YYYY-MM'，但它问的都是
- * **所属的那个月**，所以先截到 'YYYY-MM' 再比 —— 字符串比较就够了（两边都补了零）。
+ * 两态传的 `now` 不同，但问的是同一句话：
+ *   月态 now = **今天**（'YYYY-MM-DD'）→ 今天之后的每一天都算，所以"本月内今天之后"
+ *     那几天也拦（它们点下去只会关掉弹层、什么也不跳）
+ *   年态 now = **本月**（'YYYY-MM'）→ 本月之后的每一月都算
+ * 两种格式都补了零，字典序就是时间序，字符串比大小即可。
  *
- * ★ 与页面上 › 的置灰是同一条裁定：切不到未来。所以"本月内今天之后的那几天"**不算**未来 ——
- *   期间是月，不是天；点它们只是滚到那一天，不换期。
+ * ⚠ 两边的格式必须同形：月态比日、年态比月，混着传（拿 'YYYY-MM' 去比 'YYYY-MM-DD'）
+ *   会得出「全都还没到」或「全都到了」。
  */
-export function isFuturePeriod(key, nowMonth) {
-  return String(key).slice(0, 7) > nowMonth
+export function isFuture(key, now) {
+  return String(key) > String(now)
 }
 
 /**

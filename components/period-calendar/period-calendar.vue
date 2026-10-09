@@ -18,7 +18,7 @@
 
 		<!-- 格子：月态 7 列 × 6 行，年态 3 列 × 4 行 -->
 		<view class="pc-grid" :class="mode">
-			<view v-for="c in cells" :key="c.key" class="pc-cell" :class="{ dim: !c.current, today: c.isToday }"
+			<view v-for="c in cells" :key="c.key" class="pc-cell" :class="{ dim: !c.current, today: c.isToday, future: c.future }"
 				@click="pick(c.key)">
 				<text class="pc-d">{{ c.label }}</text>
 				<text class="pc-a num" :class="{ inc: c.inc }">{{ c.amountText }}</text>
@@ -29,7 +29,7 @@
 
 <script>
 import {
-	monthCells, yearCells, cellAmount, isFuturePeriod, currentPeriod, canGoForward
+	monthCells, yearCells, cellAmount, isFuture, currentPeriod, todayKey, canGoForward
 } from '@/services/calendar.js'
 import { maskStyle } from '@/services/icons.js'
 
@@ -63,9 +63,13 @@ export default {
 		canForward() {
 			return canGoForward({ year: this.year, month: this.month }, this.isYear)
 		},
-		/** 本月的 'YYYY-MM'：点格子时判「这一格是不是未来」用的 */
-		nowPeriod() {
-			return currentPeriod()
+		/**
+		 * 判「这一格还没到」用的那个"现在" —— 与格子 key 同形：
+		 * 月态是今天（'YYYY-MM-DD'）、年态是本月（'YYYY-MM'）。
+		 * ★ 父级不传 today 时自己取（月态必须有个今天，否则会把整月都判成"还没到"）
+		 */
+		nowKey() {
+			return this.isYear ? currentPeriod() : (this.today || todayKey())
 		},
 		cells() {
 			const raw = this.isYear ? yearCells(this.year) : monthCells(this.year, this.month)
@@ -76,6 +80,7 @@ export default {
 					label: this.isYear ? `${c.month}月` : String(c.day),
 					current: this.isYear ? true : c.inMonth, // 年态没有"前后月"这回事
 					isToday: !!this.today && c.key === this.today,
+					future: isFuture(c.key, this.nowKey), // 还没到：画得淡、且点不动
 					amountText: cellAmount(v),
 					inc: v > 0
 				}
@@ -91,11 +96,12 @@ export default {
 			this.$emit('shift', delta)
 		},
 		pick(key) {
-			// ★ 未来的格子点不动（与 › 置灰同一条裁定）。月历**永远**带着下个月的那几格
-			//   （42 − 本月天数 − 前面垫的 ≥ 5），年历在当前年份里 12 个月都在 ——
-			//   不拦的话，在当期随手一点就跳进一个还没到的空期间。
+			// ★ 还没到的格子点不动（与 › 置灰同一条裁定）。要拦的有两类：
+			//   ① 月历**永远**带着下个月那几格（42 − 本月天数 − 前面垫的 ≥ 5），
+			//      年历在当前年份里 12 个月都在 —— 不拦就一步跳进还没到的空期间；
+			//   ② 本月内**今天之后**的那几天 —— 点下去只会关掉弹层、什么也不跳。
 			//   拦在这里而不是两个页面各写一遍：裁定要只有一条，两页就不可能走散
-			if (isFuturePeriod(key, this.nowPeriod)) return
+			if (isFuture(key, this.nowKey)) return
 			this.$emit('pick', key)
 		}
 	}
@@ -167,6 +173,16 @@ export default {
 	// 今天：一圈描边。不用填充色，免得跟主题色抢眼
 	&.today {
 		box-shadow: inset 0 0 0 2rpx var(--md-primary);
+	}
+
+	// 还没到的格子：**连淡底都不给** —— 跟"前后月"那种"淡然而能点"区分开。
+	// 它们点下去什么都不会发生（见 pick），所以不能长得像能点的东西。
+	// 整块底一撤，这一期就"在这里结束"，一眼看得出今天是哪一天收的尾。
+	// 要写在 .dim 之后：两个类同时挂着时（本月末尾那几格既属"下月"又没到），
+	// 同权重下后一条说了算
+	&.future {
+		opacity: 0.3;
+		background: transparent;
 	}
 }
 
