@@ -176,21 +176,29 @@ export const EXPENSE_ICON_KEYS = [
 ]
 
 /**
- * **收入**分类的图标可选清单（8 列 × 3 行 = 24 枚，2026-10-09 定稿）。
+ * **收入**分类的图标可选清单（8 列 × 2 行 = 16 枚，2026-10-09 二次收紧）。
  *
- * 前面 20 枚是从 lucide-static 取的新图形（见 ICONS 里那两段注释：为什么不能用
+ * 前面 12 枚是从 lucide-static 取的新图形（见 ICONS 里那两段注释：为什么不能用
  * wallet/coins/landmark 那些「现成看着也像钱」的键 —— 它们全被账户清单占着）。
  * 末尾 4 枚是**四个预置收入分类在用的**（工资/理财/红包/其他收益），必须留着 ——
  * 拿掉的话用户编辑那几个预置分类时选中态会落空（icons-repro 有断言钉着）。
  *
- * ★ 有过一版 32 枚，被用户否掉了：「好多长得差不多的」。当时的毛病是**用数量换
- *   了区分度** —— 四个百分比（percent / circle-percent / badge-percent / ticket-percent
- *   全是「斜线 + 两个点」，只差外面套什么壳）、两张同样的锯齿小票、两个下箭头、
- *   三条上升折线。宫格是拿来「一眼扫到我要的那个」的，同义画法堆在一起只会让人逐个看字。
- *   砍到 24 枚后，**每一枚的轮廓都不同** —— 这才是这份清单该守的线。
- *   被砍掉的那 8 枚仍留在 ICONS 里（见那边注释），键一枚没删。
+ * ★ 这份清单被收过两次，都是同一个毛病：**用数量换了区分度**。
+ *   32 → 24 那次砍的是「四个百分比、两张锯齿小票、两个下箭头、三条上升折线」；
+ *   24 → 16 这次砍的是**成对的画法**（用户反馈「还是有很多相似的」）：
+ *     · heart-handshake    —— 就是 handshake 加颗心
+ *     · hand-platter       —— 与 handshake 同为「一只手」
+ *     · badge-dollar-sign  —— 与 dollar-sign 都是 $，只差外面套不套壳
+ *     · crown              —— 与 trophy 同为「荣誉 / 第一名」
+ *     · file-text          —— 与 receipt-text 同为「带字的单据」
+ *     · percent            —— 与 calculator 同为「利率 / 精算」
+ *     · key                —— 语义太弱（「关键」在收入分类里几乎没有落点）
+ *     · banknote-arrow-up  —— 与预置必留的 banknote 同为「一张钞票」
+ *   留下的 16 枚**轮廓两两不同** —— 宫格是拿来「一眼扫到我要的那个」的，
+ *   同义画法堆在一起只会让人逐个读字。被砍的 8 枚仍留在 ICONS 里（见那边注释），
+ *   键一枚没删 —— 老库要是存过它们，分类照样编辑得动。
  *
- * 排列按语义成组（到账薪酬 → 增长收益 → 合作服务 → 变现票据 → 单据跨境 → 预置在用），
+ * 排列按语义成组（成就增长 → 精算合作 → 贵重服务 → 单据经营 → 预置在用），
  * 不是按加入顺序 —— 8 列铺开时同类挨着才好找。
  *
  * ⚠ 与支出清单**允许重复**（banknote / trend / gift / sparkles 两边都有）：手续费要用钞票、
@@ -198,11 +206,9 @@ export const EXPENSE_ICON_KEYS = [
  *   专门避开的东西。
  */
 export const INCOME_ICON_KEYS = [
-	'banknote-arrow-up', 'badge-dollar-sign', 'trophy', 'crown',
-	'sprout', 'chart-pie', 'percent', 'calculator',
-	'handshake', 'heart-handshake', 'hand-platter', 'megaphone',
-	'tag', 'key', 'gem', 'dollar-sign',
-	'receipt-text', 'file-text', 'calendar-check', 'factory',
+	'trophy', 'sprout', 'chart-pie', 'calculator',
+	'handshake', 'megaphone', 'gem', 'tag',
+	'receipt-text', 'calendar-check', 'factory', 'dollar-sign',
 	'banknote', 'trend', 'gift', 'sparkles'
 ]
 
