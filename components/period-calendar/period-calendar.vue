@@ -17,8 +17,8 @@
 		</view>
 
 		<!-- 格子：月态 7 列 × 6 行，年态 3 列 × 4 行 -->
-		<view class="pc-grid" :class="mode">
-			<view v-for="c in cells" :key="c.key" class="pc-cell" :style="cellStyle"
+		<view class="pc-grid" :class="mode" :style="gridStyle">
+			<view v-for="c in cells" :key="c.key" class="pc-cell"
 				:class="{ dim: !c.current, today: c.isToday, future: c.future }" @click="pick(c)">
 				<text class="pc-d">{{ c.label }}</text>
 				<text class="pc-e num">{{ c.expenseText }}</text>
@@ -30,7 +30,7 @@
 
 <script>
 import {
-	monthCells, yearCells, cellLine, cellHeight, isFuture, currentPeriod, todayKey, canGoForward
+	monthCells, yearCells, cellLine, rowGap, isFuture, currentPeriod, todayKey, canGoForward
 } from '@/services/calendar.js'
 import { maskStyle } from '@/services/icons.js'
 
@@ -76,13 +76,13 @@ export default {
 			return this.isYear ? currentPeriod() : (this.today || todayKey())
 		},
 		/**
-		 * 月态格子的高度（rpx）。★ 行数少（4/5 行）格子就**长高**，整块高度恒定 ——
-		 * 翻月时弹层因此不跳（"不跳"原先靠永远铺 6 行来保证，现在靠这条式子）。
-		 * 年态恒 4 行，高度写在样式里，不用这个。
+		 * 月态的**行距**（不是格子高度）。★ 行数少了，多出来的空间给行距、不给格子 ——
+		 * 格子因此始终近正方（比例保持不变），只是行与行松一些；整块高度恒定，翻月时不跳。
+		 * 年态恒 4 行，间距写在样式里，不用这个。
 		 */
-		cellStyle() {
+		gridStyle() {
 			if (this.isYear) return {}
-			return { height: `${cellHeight(this.cells.length / 7)}rpx` }
+			return { rowGap: `${rowGap(this.cells.length / 7)}rpx` }
 		},
 		cells() {
 			const raw = this.isYear ? yearCells(this.year) : monthCells(this.year, this.month)
@@ -168,12 +168,18 @@ export default {
 	display: grid;
 	grid-template-columns: repeat(7, 1fr);
 	// ⚠ 这个 6rpx 与 services/calendar.js 里的 CELL_GAP 是**同一个数**，改一个就要改另一个
-	gap: 6rpx;
+	column-gap: 6rpx;
+}
+
+// 月态的行距由内联样式给（按行数算，见 gridStyle）：行数少了就松一些，
+// 让出来的空间不进格子 —— 格子因此始终近正方
+.pc-grid {
+	row-gap: 6rpx;
 }
 
 .pc-grid.year {
 	grid-template-columns: repeat(3, 1fr);
-	gap: 14rpx;
+	gap: 14rpx; // 年态恒 4 行，横竖都写死（不走 rowGap）
 }
 
 .pc-wd {
@@ -188,8 +194,9 @@ export default {
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	// 月态的高度由内联样式给（按行数算，见 cellStyle）：**行少就长高，整块高度不变**。
-	// 年态恒 4 行，高度就写在下面那条里
+	// ⚠ 104rpx 与 services/calendar.js 里的 CELL_H 是**同一个数**，改一个就要改另一个。
+	// 行数少了**不**长高：多出来的空间给行距（见 gridStyle），格子比例因此保持不变
+	min-height: 104rpx;
 	border-radius: 16rpx;
 	background: var(--md-surface-container);
 

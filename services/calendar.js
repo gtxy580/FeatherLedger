@@ -29,7 +29,7 @@ export function daysInMonth(year, month) {
  * ★ 只铺到**够用的行数**（4~6 行），不强行补成 6 行 —— 用户裁定：能 5 行就 5 行。
  *   5 行那种末尾不再拖一整行淡灰的"下个月"。
  *   代价是要自己保证"整块高度不变"，否则点 › 翻月时弹层会跳 —— 那件事交给
- *   cellHeight()：行数少了格子就长高，总高恒等。
+ *   rowGap()：行数少了多出来的空间给行距，总高、格子大小都恒定。
  * 周一开头是中文习惯（与页面里「一 二 三 … 日」的表头一致）。
  */
 export function monthCells(year, month) {
@@ -49,23 +49,33 @@ export function monthCells(year, month) {
 }
 
 /**
- * 月历格子之间的间隙（rpx）。
- * ⚠ 与 `.pc-grid` 的 `gap` 是**同一个数**，改一个就要改另一个（那边注释里也写了这句）。
+ * 月历格子的高度（rpx）。
+ * ⚠ 与 `.pc-cell` 的 `min-height` 是**同一个数**，改一个就要改另一个（那边注释里也写了这句）。
+ */
+export const CELL_H = 104
+
+/**
+ * 月历格子的横向间隙（rpx）。
+ * ⚠ 与 `.pc-grid` 的 `column-gap` 是**同一个数**，改一个就要改另一个。
  */
 export const CELL_GAP = 6
 
-/** 整块月历的高度（rpx）= 6 行 × 104 + 5 × 6。行数变，它不变 */
+/** 整块月历的高度（rpx）= 6 行 × 104 + 5 × 6。行数怎么变，它不变 */
 const GRID_H = 654
 
 /**
- * 月历格子该多高（rpx）。
+ * 月历的**行距**该多大（rpx）。
  *
- * ★ 行数少了，格子就**长高**，整块高度始终是 GRID_H —— 于是翻月时弹层不跳
- *   （"不跳"这件事原先靠"永远铺 6 行"来保证，现在改成靠这条式子）。
- *   4/5/6 行分别得到 159 / 126 / 104rpx。
+ * ★ 行数少了（4/5 行），多出来的空间给**行距**、不给格子 —— 于是格子始终近正方
+ *   （104 × 99），只是行与行之间松一些（4/5/6 行 → 79 / 33 / 6rpx）。
+ *   整块高度因此恒定，翻月时弹层不跳。
+ *
+ * （一度是把余量给格子的：5 行时格子高到 126rpx、瘦长难看。用户裁定：间距做大、
+ *   格子比例保持不变。）
  */
-export function cellHeight(rows) {
-  return Math.floor((GRID_H - (rows - 1) * CELL_GAP) / rows)
+export function rowGap(rows) {
+  if (rows < 2) return CELL_GAP
+  return Math.floor((GRID_H - rows * CELL_H) / (rows - 1))
 }
 
 /** 年历的 12 个格子，key 与年视图的 groups 同一个形状（'YYYY-MM'） */
