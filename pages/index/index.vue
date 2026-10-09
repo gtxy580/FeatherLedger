@@ -327,6 +327,7 @@
 	import pressFx from '@/services/press.js'
 	import PeriodCalendar from '@/components/period-calendar/period-calendar.vue'
 	import { todayKey, canGoForward } from '@/services/calendar.js'
+	import { takeFocusDay } from '@/services/focus-day.js'
 	// 懒加载的切片逻辑（与分类明细页共用一份，可被 scripts/lazy-repro.mjs 覆盖）
 	import {
 		sliceGroups
@@ -552,7 +553,11 @@
 		},
 		// 首次显示也会触发 onShow（在 onLoad 之后）；从记一笔/我的返回时刷新
 		onShow() {
-			this.load()
+			// 刚从记一笔回来：把那一天聚出来（可能要连期一起换）。平时还是原来那句 load()
+			// ★ 便条是**取走即清**的，所以切 tab、从别的页回来都不会重复跳
+			const focus = takeFocusDay()
+			if (focus) this.focusDay(focus)
+			else this.load()
 			this.loadTagline()
 			this.loadAccounts() // M6：账户名/余额可能刚在账户页改过
 		},
@@ -732,6 +737,24 @@
 			/** 用户自己一滚，就清掉「滚到某天」的指令（留着的话下次重渲染会被拽回去） */
 			onListScroll() {
 				if (this.scrollIntoView) this.scrollIntoView = ''
+			},
+			/**
+			 * 聚焦某一天：期不对就先换期，再滚到那天的分组。刚记完一笔回首页时走它。
+			 *
+			 * ⚠ 这条链与日历点按（onCalendarPick）是同一件事 —— 区别只在它不关弹层。
+			 *   两条都落在 scrollToDay 上，所以"先抬 shownRows 再 scroll-into-view"那套只有一份。
+			 * ★ 年态下一律切回月态：年视图里按天分组根本不存在，跳到"某一天"只有月视图做得到。
+			 * ★ 账户筛选把那天的记录滤掉了 → 跳不过去，**静默不动**（不动用户的筛选）。
+			 */
+			async focusDay(dateKey) {
+				const toMonth = dateKey.slice(0, 7)
+				if (this.mode !== 'month' || this.month !== toMonth) {
+					this.mode = 'month'
+					this.month = toMonth
+					this.year = Number(toMonth.slice(0, 4))
+				}
+				await this.load({ jumpToDay: true })
+				this.scrollToDay(dateKey)
 			},
 			closePeriodPicker() {
 				if (!this.showPeriodPicker || this.ppClosing) return

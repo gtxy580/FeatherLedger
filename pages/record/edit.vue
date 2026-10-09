@@ -365,6 +365,7 @@
 		timeFromIndexes
 	} from '@/services/format.js'
 	import pressFx from '@/services/press.js'
+	import { setFocusDay } from '@/services/focus-day.js'
 
 	// 金额那一行留给数字的宽度（rpx）：整宽 750 − 两侧留白 − 标签与「元」。
 	// 这几个数是照着 `.amount-display` 的 Less 量出来的（转账行 padding 48×2、
@@ -1328,6 +1329,13 @@
 						title: editing ? '已保存' : this.prepay ? '已记预付' : '已记账',
 						icon: 'success'
 					})
+					// 回首页时把那一天聚出来（换期 + 滚到那天）：留一张"刚存的是哪天"的便条。
+					// ★ 只在**上一页是首页**时才留 —— 首页才有这个视图。从「明细」/「我的」记完
+					//   留着的值会在你下次切回首页时冷不丁跳一下（补记过去的日期时尤其明显：
+					//   首页会自己翻到那个月）。
+					const pg = getCurrentPages()
+					const prev = pg[pg.length - 2]
+					if (prev && prev.route === 'pages/index/index') setFocusDay(this.date)
 					setTimeout(() => uni.navigateBack(), 800) // 让 toast 露脸（M2 既有节奏）
 					// 兜底：navigateBack 若没把页面带走（本页恰是唯一页面时会发生），
 					// saving 不能永久为 true——1.5s 后复位，比导航窗口长，双击仍被挡住
