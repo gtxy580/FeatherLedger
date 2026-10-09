@@ -268,9 +268,15 @@ export default {
 }
 
 // 收、支各一行（上支下收，与列表里「支 X 收 Y」同一个顺序）。
-// 没数的那行是空串，所以每格一样高、行也齐。
+// ★ **左对齐**，不跟格子中线对齐（用户裁定）：两行各自居中时，「支」「收」两个字会被
+//   各自的宽度推进推出（`支 128` 比 `收 80` 宽），上下看着像锯齿。左对齐之后
+//   「支 / 收」和后面的数字各成一列，一眼扫得下来。
+//   `align-self: stretch` 让这两行占满格宽（不是缩成内容宽），`text-align` 才有的可对
 .pc-e,
 .pc-i {
+	align-self: stretch;
+	padding-left: 8rpx;
+	text-align: left;
 	font-size: 20rpx;
 	line-height: 1.2;
 	color: var(--md-on-surface);
