@@ -24,17 +24,20 @@ export function daysInMonth(year, month) {
 }
 
 /**
- * 月历的 42 个格子（6 行 × 7 列），从**该月 1 日所在那一周的周一**开始。
+ * 月历的格子（每行 7 格），从**该月 1 日所在那一周的周一**开始。
  *
- * 固定 42 格而不是"够用就少一行"：弹层高度因此恒定，点 › 翻月时不会跳。
- * 代价是有的月份第 6 行整行都是淡灰的 —— 可接受。
+ * ★ 只铺到**够用的行数**（4~6 行），不强行补成 6 行 —— 用户裁定：能 5 行就 5 行。
+ *   5 行那种末尾不再拖一整行淡灰的"下个月"。
+ *   代价是要自己保证"整块高度不变"，否则点 › 翻月时弹层会跳 —— 那件事交给
+ *   cellHeight()：行数少了格子就长高，总高恒等。
  * 周一开头是中文习惯（与页面里「一 二 三 … 日」的表头一致）。
  */
 export function monthCells(year, month) {
   // getDay(): 0=周日 … 6=周六 → 换算成"周一起算"的 0..6
   const lead = (new Date(year, month - 1, 1).getDay() + 6) % 7
+  const rows = Math.ceil((lead + daysInMonth(year, month)) / 7) // 4 / 5 / 6
   const out = []
-  for (let i = 0; i < 42; i++) {
+  for (let i = 0; i < rows * 7; i++) {
     const d = new Date(year, month - 1, 1 - lead + i)
     out.push({
       key: dayKey(d.getFullYear(), d.getMonth() + 1, d.getDate()),
@@ -43,6 +46,26 @@ export function monthCells(year, month) {
     })
   }
   return out
+}
+
+/**
+ * 月历格子之间的间隙（rpx）。
+ * ⚠ 与 `.pc-grid` 的 `gap` 是**同一个数**，改一个就要改另一个（那边注释里也写了这句）。
+ */
+export const CELL_GAP = 6
+
+/** 整块月历的高度（rpx）= 6 行 × 104 + 5 × 6。行数变，它不变 */
+const GRID_H = 654
+
+/**
+ * 月历格子该多高（rpx）。
+ *
+ * ★ 行数少了，格子就**长高**，整块高度始终是 GRID_H —— 于是翻月时弹层不跳
+ *   （"不跳"这件事原先靠"永远铺 6 行"来保证，现在改成靠这条式子）。
+ *   4/5/6 行分别得到 159 / 126 / 104rpx。
+ */
+export function cellHeight(rows) {
+  return Math.floor((GRID_H - (rows - 1) * CELL_GAP) / rows)
 }
 
 /** 年历的 12 个格子，key 与年视图的 groups 同一个形状（'YYYY-MM'） */

@@ -18,8 +18,8 @@
 
 		<!-- 格子：月态 7 列 × 6 行，年态 3 列 × 4 行 -->
 		<view class="pc-grid" :class="mode">
-			<view v-for="c in cells" :key="c.key" class="pc-cell" :class="{ dim: !c.current, today: c.isToday, future: c.future }"
-				@click="pick(c)">
+			<view v-for="c in cells" :key="c.key" class="pc-cell" :style="cellStyle"
+				:class="{ dim: !c.current, today: c.isToday, future: c.future }" @click="pick(c)">
 				<text class="pc-d">{{ c.label }}</text>
 				<text class="pc-e num">{{ c.expenseText }}</text>
 				<text class="pc-i num">{{ c.incomeText }}</text>
@@ -30,7 +30,7 @@
 
 <script>
 import {
-	monthCells, yearCells, cellLine, isFuture, currentPeriod, todayKey, canGoForward
+	monthCells, yearCells, cellLine, cellHeight, isFuture, currentPeriod, todayKey, canGoForward
 } from '@/services/calendar.js'
 import { maskStyle } from '@/services/icons.js'
 
@@ -74,6 +74,15 @@ export default {
 		 */
 		nowKey() {
 			return this.isYear ? currentPeriod() : (this.today || todayKey())
+		},
+		/**
+		 * 月态格子的高度（rpx）。★ 行数少（4/5 行）格子就**长高**，整块高度恒定 ——
+		 * 翻月时弹层因此不跳（"不跳"原先靠永远铺 6 行来保证，现在靠这条式子）。
+		 * 年态恒 4 行，高度写在样式里，不用这个。
+		 */
+		cellStyle() {
+			if (this.isYear) return {}
+			return { height: `${cellHeight(this.cells.length / 7)}rpx` }
 		},
 		cells() {
 			const raw = this.isYear ? yearCells(this.year) : monthCells(this.year, this.month)
@@ -158,6 +167,7 @@ export default {
 .pc-grid {
 	display: grid;
 	grid-template-columns: repeat(7, 1fr);
+	// ⚠ 这个 6rpx 与 services/calendar.js 里的 CELL_GAP 是**同一个数**，改一个就要改另一个
 	gap: 6rpx;
 }
 
@@ -178,7 +188,8 @@ export default {
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	min-height: 104rpx;
+	// 月态的高度由内联样式给（按行数算，见 cellStyle）：**行少就长高，整块高度不变**。
+	// 年态恒 4 行，高度就写在下面那条里
 	border-radius: 16rpx;
 	background: var(--md-surface-container);
 
