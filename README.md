@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | **首页 · 明细**<br><img src="screenshots/home.jpg" width="210"> | **记一笔 · 金额加减**<br><img src="screenshots/record.jpg" width="210"> | **转账（含手续费）**<br><img src="screenshots/transfer.jpg" width="210"> |
 | **分类 · 图标与色板**<br><img src="screenshots/category.jpg" width="210"> | **统计 · 占比与趋势**<br><img src="screenshots/stats.jpg" width="210"> | **主题 · 10 套预设**<br><img src="screenshots/theme.jpg" width="210"> |
-| **数据 · 导出 / 导入 / 撤销**<br><img src="screenshots/data.jpg" width="210"> | | |
+| **数据 · 导出 / 导入 / 撤销**<br><img src="screenshots/data.jpg" width="210"> | **预付 · 垫付与报销**<br><img src="screenshots/prepay.jpg" width="210"> | |
 
 ## 功能
 
