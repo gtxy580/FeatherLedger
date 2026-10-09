@@ -20,7 +20,7 @@
 		     每格里：日期自己占一个块，收/支两行挂在块下面（见 .pc-box 那段注释） -->
 		<view class="pc-grid" :class="mode" :style="gridStyle">
 			<view v-for="c in cells" :key="c.key" class="pc-cell"
-				:class="{ dim: !c.current, today: c.isToday, future: c.future, pressing: isPressed(c.key) }"
+				:class="{ dim: !c.current, today: c.isToday, off: c.off, pressing: isPressed(c.key) }"
 				@touchstart="onCellDown(c)" @touchend="pressOff" @touchcancel="pressOff" @click="pick(c)">
 				<view class="pc-box">
 					<text class="pc-d">{{ c.label }}</text>
@@ -95,16 +95,23 @@ export default {
 			const raw = this.isYear ? yearCells(this.year) : monthCells(this.year, this.month)
 			return raw.map((c) => {
 				const cell = this.values[c.key] || {}
+				const future = isFuture(c.key, this.nowKey)
+				const current = this.isYear ? true : c.inMonth // 年态没有"前后月"这回事
+				// 「背后有没有东西可看」——就是 values 里有没有这一格。
+				// ★ 收支相抵的那天（收付一样多、差额 0）也照样落一个键，所以照样点得动；
+				//   没流水的那天压根不会有键
+				const hasData = Object.prototype.hasOwnProperty.call(this.values, c.key)
 				return {
 					key: c.key,
 					label: this.isYear ? `${c.month}月` : String(c.day),
-					current: this.isYear ? true : c.inMonth, // 年态没有"前后月"这回事
+					current,
 					isToday: !!this.today && c.key === this.today,
-					future: isFuture(c.key, this.nowKey), // 还没到：画得淡、且点不动
-					// 「背后有没有东西可看」——就是 values 里有没有这一格。
-					// ★ 收支相抵的那天（收付一样多、差额 0）也照样落一个键，所以照样点得动；
-					//   没流水的那天压根不会有键
-					hasData: Object.prototype.hasOwnProperty.call(this.values, c.key),
+					// 这三个是 pick / onCellDown 的判据（canPickCell 读它们）
+					future,
+					hasData,
+					// ★ 画成"点不动"的样子 = **就是那几个点不动的格子**，与 pick 同一条判据。
+					//   长得像能点、点了却没反应，比明摆着灰掉更糟（用户裁定）
+					off: !canPickCell({ future, current, hasData }, this.isYear),
 					// 收、支分两行（用户裁定）。没数的那行是空串 —— 标签由 cellLine 说了算，
 					// 不足半元时连标签一起省掉，不留半截子「支 」
 					expenseText: cellLine('支', cell.expense),
@@ -212,12 +219,12 @@ export default {
 		box-shadow: inset 0 0 0 2rpx var(--md-primary);
 	}
 
-	// 还没到的格子：**连淡底都不给** —— 跟"前后月"那种"淡然而能点"区分开。
-	// 它们点下去什么都不会发生（见 pick），所以不能长得像能点的东西。
-	// 整块底一撤，这一期就"在这里结束"，一眼看得出今天是哪一天收的尾。
-	// 要写在 .dim 之后：两个类同时挂着时（本月末尾那几格既属"下月"又没到），
-	// 同权重下后一条说了算
-	&.future {
+	// 点不动的格子（还没到的 + 当期里没账的）：**连淡底都不给**、整格淡下去。
+	// ★ 这一条与 pick / onCellDown 是**同一条判据**（canPickCell，在 cells 里算成 off）——
+	//   点得动才有底、点不动就灰。长得像能点、点了却没反应，比明摆着灰掉更糟（用户裁定）。
+	// 还要与"前后月"那种"淡然而能点"分开：那些**有底**，是能点的。
+	// 写在 .dim 之后：两个类同时挂着时（本月末尾那几格既属"下月"又没到），同权重下后一条说了算
+	&.off {
 		opacity: 0.3;
 
 		.pc-box {
