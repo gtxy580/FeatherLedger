@@ -699,10 +699,17 @@
 			 */
 			scrollToDay(dateKey) {
 				let rows = 0
+				let hit = false
 				for (const g of this.groups) {
 					rows += g.records.length
-					if (g.key === dateKey) break
+					if (g.key === dateKey) {
+						hit = true
+						break
+					}
 				}
+				// 那天没有流水（列表里根本没有这一组）：没有可滚的目标，指令也别留下 ——
+				// 否则 rows 会一路加到全量，白白把整期都渲染出来
+				if (!hit) return
 				if (rows > this.shownRows) this.shownRows = rows
 				this.$nextTick(() => { this.scrollIntoView = 'g-' + dateKey })
 			},

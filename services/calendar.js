@@ -57,6 +57,9 @@ export function yearCells(year) {
  * 绝对值 < 1 万元 → 整数元（`-128` / `+80`）；≥ 1 万元 → 一位小数的「万」（`-1.3万`）。
  * 0 给**空串**：没记账的格子和"那天正好收支相抵"在这件事上都是"没有可看的数"，
  * 画个 `+0` 只会让人以为记过账。
+ *
+ * ★ 判定要在**取整之后**做：不足半元（如收 50.00 支 49.60，净 0.40 元）四舍五入也是 0，
+ *   按取整前的 `!n` 判会漏过去，画出一个 `+0` / `-0`。`-0` 尤其荒唐。
  */
 export function cellAmount(cents) {
   const n = Number(cents) || 0
@@ -69,7 +72,28 @@ export function cellAmount(cents) {
     const s = w >= 100 ? String(Math.round(w)) : String(Math.round(w * 10) / 10)
     return `${sign}${s}万`
   }
-  return `${sign}${Math.round(yuan)}`
+  const y = Math.round(yuan) // 先取整，再判是不是 0（见上面那段注释）
+  if (!y) return ''
+  return `${sign}${y}`
+}
+
+/** 本月的 'YYYY-MM' —— 「不能翻到未来」比的就是它 */
+export function currentPeriod() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+/**
+ * 这一格是不是**未来期间**。
+ *
+ * 月态的格子给的是完整日期（'YYYY-MM-DD'）、年态给的是 'YYYY-MM'，但它问的都是
+ * **所属的那个月**，所以先截到 'YYYY-MM' 再比 —— 字符串比较就够了（两边都补了零）。
+ *
+ * ★ 与页面上 › 的置灰是同一条裁定：切不到未来。所以"本月内今天之后的那几天"**不算**未来 ——
+ *   期间是月，不是天；点它们只是滚到那一天，不换期。
+ */
+export function isFuturePeriod(key, nowMonth) {
+  return String(key).slice(0, 7) > nowMonth
 }
 
 /**

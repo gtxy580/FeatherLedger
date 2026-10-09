@@ -411,12 +411,19 @@ export default {
      * 列表是懒加载切片的（visibleItems），节点不在时 scroll-into-view 会静默失败。
      */
     scrollToDay(dateKey) {
-      let i = 0
+      // ★ 那天**可能有好几张卡**（一天结清好几笔，items 按 date DESC 排、同一天连着）。
+      //   要数到那天的**最后一张**为止 —— 只数到第一张的话，滚过去只看得到一张，
+      //   后面几张压根没渲染出来，而这时列表又没有多少可滚的余量把它们带出来，
+      //   用户就卡在「我明明那天结清了两笔」那里
+      let rows = 0
+      let hit = false
       for (const p of this.items) {
-        i++
-        if (p.date === dateKey) break
+        if (p.date === dateKey) hit = true
+        else if (hit) break
+        rows++
       }
-      if (i > this.shownRows) this.shownRows = i
+      if (!hit) return // 那天没有结清记录：没有可滚的目标，指令也别留下
+      if (rows > this.shownRows) this.shownRows = rows
       this.$nextTick(() => { this.scrollIntoView = 'c-' + dateKey })
     },
     /** 用户自己一滚，就清掉「滚到某天」的指令 */

@@ -28,7 +28,7 @@
 </template>
 
 <script>
-import { monthCells, yearCells, cellAmount } from '@/services/calendar.js'
+import { monthCells, yearCells, cellAmount, isFuturePeriod, currentPeriod } from '@/services/calendar.js'
 import { maskStyle } from '@/services/icons.js'
 
 // 周一起头是中文习惯（列对齐靠 grid 的等分，不靠这七个字的宽度）
@@ -66,6 +66,10 @@ export default {
 			return this.viewYear < d.getFullYear() ||
 				(this.viewYear === d.getFullYear() && this.viewMonth < d.getMonth() + 1)
 		},
+		/** 本月的 'YYYY-MM'：点格子时判「这一格是不是未来」用的 */
+		nowPeriod() {
+			return currentPeriod()
+		},
 		cells() {
 			const raw = this.isYear ? yearCells(this.viewYear) : monthCells(this.viewYear, this.viewMonth)
 			return raw.map((c) => {
@@ -95,6 +99,11 @@ export default {
 			this.viewMonth = d.getMonth() + 1
 		},
 		pick(key) {
+			// ★ 未来的格子点不动（与 › 置灰同一条裁定）。月历**永远**带着下个月的那几格
+			//   （42 − 本月天数 − 前面垫的 ≥ 5），年历在当前年份里 12 个月都在 ——
+			//   不拦的话，在当期随手一点就跳进一个还没到的空期间。
+			//   拦在这里而不是两个页面各写一遍：裁定要只有一条，两页就不可能走散
+			if (isFuturePeriod(key, this.nowPeriod)) return
 			this.$emit('pick', key)
 		}
 	}
