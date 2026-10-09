@@ -474,14 +474,18 @@
 				return todayKey()
 			},
 			/**
-			 * 喂给日历的每格数字：当天的**净收支**（分）。
+			 * 喂给日历的每格数字：那天的**收、支两笔**（分，都是正数）。
 			 *
 			 * ★ 用**全量** groups，不是 visibleGroups —— 后者是懒加载切过的、只有渲染出来那一段，
 			 *   而日历要看整月/整年。
+			 * ★ 分担不改数：groups 的键本来就是这一期的形状（月态按天、年态按月），
+			 *   与格子的 key 同形。
 			 */
 			periodValues() {
 				const out = {}
-				for (const g of this.groups) out[g.key] = (g.income || 0) - (g.expense || 0)
+				for (const g of this.groups) {
+					out[g.key] = { income: g.income || 0, expense: g.expense || 0 }
+				}
 				return out
 			},
 			// 能不能往后翻：不允许切到「当天之后」（用户裁定）。实现在 services/calendar.js，

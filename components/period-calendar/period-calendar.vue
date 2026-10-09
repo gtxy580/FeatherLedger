@@ -21,7 +21,8 @@
 			<view v-for="c in cells" :key="c.key" class="pc-cell" :class="{ dim: !c.current, today: c.isToday, future: c.future }"
 				@click="pick(c)">
 				<text class="pc-d">{{ c.label }}</text>
-				<text class="pc-a num" :class="{ inc: c.inc }">{{ c.amountText }}</text>
+				<text class="pc-e num">{{ c.expenseText }}</text>
+				<text class="pc-i num">{{ c.incomeText }}</text>
 			</view>
 		</view>
 	</view>
@@ -29,7 +30,7 @@
 
 <script>
 import {
-	monthCells, yearCells, cellAmount, isFuture, currentPeriod, todayKey, canGoForward
+	monthCells, yearCells, cellLine, isFuture, currentPeriod, todayKey, canGoForward
 } from '@/services/calendar.js'
 import { maskStyle } from '@/services/icons.js'
 
@@ -47,6 +48,9 @@ export default {
 		year: { type: Number, required: true },
 		month: { type: Number, default: 1 },
 		today: { type: String, default: '' },
+		// 每格的数字：{ '2026-10-15': { income: 8000, expense: 12800 } }（分，两个都是正数）。
+		// ★ 键必须与格子的 key 同形（月态按天、年态按月），且**有键 = 那格点得动** ——
+		//   所以收支相抵（差额 0）的那天也要落一个键
 		values: { type: Object, default: () => ({}) }
 	},
 	data() {
@@ -74,7 +78,7 @@ export default {
 		cells() {
 			const raw = this.isYear ? yearCells(this.year) : monthCells(this.year, this.month)
 			return raw.map((c) => {
-				const v = Number(this.values[c.key]) || 0
+				const cell = this.values[c.key] || {}
 				return {
 					key: c.key,
 					label: this.isYear ? `${c.month}月` : String(c.day),
@@ -82,11 +86,13 @@ export default {
 					isToday: !!this.today && c.key === this.today,
 					future: isFuture(c.key, this.nowKey), // 还没到：画得淡、且点不动
 					// 「背后有没有东西可看」——就是 values 里有没有这一格。
-					// ★ 净 0 的那天（收支正好相抵）也照样落一个键，所以照样点得动；
+					// ★ 收支相抵的那天（收付一样多、差额 0）也照样落一个键，所以照样点得动；
 					//   没流水的那天压根不会有键
 					hasData: Object.prototype.hasOwnProperty.call(this.values, c.key),
-					amountText: cellAmount(v),
-					inc: v > 0
+					// 收、支分两行（用户裁定）。没数的那行是空串 —— 标签由 cellLine 说了算，
+					// 不足半元时连标签一起省掉，不留半截子「支 」
+					expenseText: cellLine('支', cell.expense),
+					incomeText: cellLine('收', cell.income)
 				}
 			})
 		}
@@ -172,7 +178,7 @@ export default {
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	min-height: 88rpx;
+	min-height: 104rpx;
 	border-radius: 16rpx;
 	background: var(--md-surface-container);
 
@@ -198,7 +204,7 @@ export default {
 }
 
 .pc-grid.year .pc-cell {
-	min-height: 120rpx;
+	min-height: 132rpx;
 }
 
 .pc-d {
@@ -207,13 +213,17 @@ export default {
 	color: var(--md-on-surface-variant);
 }
 
-.pc-a {
+// 收、支各一行（上支下收，与列表里「支 X 收 Y」同一个顺序）。
+// 没数的那行是空串，所以每格一样高、行也齐。
+.pc-e,
+.pc-i {
 	font-size: 20rpx;
 	line-height: 1.2;
 	color: var(--md-on-surface);
+}
 
-	&.inc {
-		color: var(--md-income);
-	}
+// 收带主题色 —— 与列表里「收」那截同一个规矩（支出留默认色）
+.pc-i {
+	color: var(--md-income);
 }
 </style>

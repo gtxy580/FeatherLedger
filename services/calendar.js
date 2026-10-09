@@ -65,27 +65,38 @@ export function gridKeyOf(date, isYear) {
 /**
  * 格子里的短金额。格宽只有 ~80rpx，`-128.00` 放不下，所以**不能照用 fmtYuan**。
  *
- * 绝对值 < 1 万元 → 整数元（`-128` / `+80`）；≥ 1 万元 → 一位小数的「万」（`-1.3万`）。
+ * 绝对值 < 1 万元 → 整数元（`128`）；≥ 1 万元 → 一位小数的「万」（`1.3万`）。
  * 0 给**空串**：没记账的格子和"那天正好收支相抵"在这件事上都是"没有可看的数"，
- * 画个 `+0` 只会让人以为记过账。
+ * 画个 `0` 只会让人以为记过账。
  *
- * ★ 判定要在**取整之后**做：不足半元（如收 50.00 支 49.60，净 0.40 元）四舍五入也是 0，
- *   按取整前的 `!n` 判会漏过去，画出一个 `+0` / `-0`。`-0` 尤其荒唐。
+ * ★ **不给符号**：一格现在分两行（「支 128」/「收 80」），正负由**标签**说，不由符号说 ——
+ *   所以负数也只给量值。（早先一格只画净额，那时才需要那个正负号。）
+ * ★ 判定要在**取整之后**做：不足半元（如支 49.60）四舍五入也是 0，按取整前的 `!n` 判会漏过去。
  */
 export function cellAmount(cents) {
-  const n = Number(cents) || 0
+  const n = Math.abs(Number(cents) || 0)
   if (!n) return ''
-  const sign = n < 0 ? '-' : '+'
-  const yuan = Math.abs(n) / 100
+  const yuan = n / 100
   if (yuan >= 10000) {
     const w = yuan / 10000
     // 一位小数；正好整数就不拖 `.0`（`2万` 比 `2.0万` 干净）
     const s = w >= 100 ? String(Math.round(w)) : String(Math.round(w * 10) / 10)
-    return `${sign}${s}万`
+    return `${s}万`
   }
   const y = Math.round(yuan) // 先取整，再判是不是 0（见上面那段注释）
   if (!y) return ''
-  return `${sign}${y}`
+  return String(y)
+}
+
+/**
+ * 格子上的一行：「支 128」/「收 80」。
+ *
+ * 没数（或不足半元）给**空串** —— 不是「支 0」，也不是半截子「支 」（那个尾巴空格很难看）。
+ * 标签由调用方给，因为它们是要给人看的话（月态年态一样，但换个说法就换这里）。
+ */
+export function cellLine(label, cents) {
+  const s = cellAmount(cents)
+  return s ? `${label} ${s}` : ''
 }
 
 /** 本月的 'YYYY-MM' —— 「不能翻到未来」比的就是它 */
@@ -130,22 +141,28 @@ export function canGoForward(period, isYear, now = new Date()) {
 }
 
 /**
- * 按天聚合：`{ 'YYYY-MM-DD': 合计 }`。
+ * 按 key 聚成**收 / 支两笔**（不是一个净额）—— 日历格子上收、支是分两行显示的。
  *
- * 两个页面的数据形状不同（首页是"按天分好组的对象"、预付历史是"一堆带日期的行"），
- * 但"**同一天的多笔要累加**"这条是一样的 —— 差别只在怎么取日期、取哪个数，
- * 所以两个都靠回调传进来，免得在页面里各写一遍循环（写两遍就迟早走散）。
+ * `valueOf` 给的是**有符号**的一笔：正数进支出、负数进收入。
+ * 预付那边天然就是这个形状：`remaining` 为正 = 还没报回来、为负 = 多收回来的。
+ *
+ * ★ 值为 0 的行**也要落键**：那天确实有一笔（比如差额为 0 的结清），日历上就该点得动 ——
+ *   「这一格有没有东西」看的是键在不在，不是数大不大。
  *
  * @param {Array} rows
- * @param {(row) => string} keyOf    取那一行的日期
- * @param {(row) => number} valueOf  取那一行要累加的数（分）
+ * @param {(row) => string} keyOf    取那一行的 key
+ * @param {(row) => number} valueOf  取那一行的数（分，有符号）
+ * @returns {Object<string, {income: number, expense: number}>} 两个都是正数
  */
-export function sumByDay(rows, keyOf, valueOf) {
+export function sumByKey(rows, keyOf, valueOf) {
   const out = {}
   for (const r of rows) {
     const k = keyOf(r)
-    if (!k) continue // 没有日期的行直接跳过，免得落进一个 undefined 键
-    out[k] = (out[k] || 0) + (Number(valueOf(r)) || 0)
+    if (!k) continue // 没有 key 的行直接跳过，免得落进一个 undefined 键
+    const v = Number(valueOf(r)) || 0
+    const cell = out[k] || (out[k] = { income: 0, expense: 0 })
+    if (v > 0) cell.expense += v
+    else if (v < 0) cell.income += -v
   }
   return out
 }
