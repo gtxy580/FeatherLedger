@@ -17,7 +17,7 @@
 
 | 用在哪 | 作品 | 许可 | 上游 |
 |---|---|---|---|
-| 图标（绝大部分：分类 40 枚 / 账户 16 枚 / 界面小图标） | Lucide | ISC | <https://github.com/lucide-icons/lucide> |
+| 图标（绝大部分：分类 支出 40 枚 / 收入 16 枚、账户 16 枚、界面小图标） | Lucide | ISC | <https://github.com/lucide-icons/lucide> |
 | 图标（部分源自，随 Lucide 一并使用） | Feather | MIT | <https://github.com/feathericons/feather> |
 | 图标（微信账户，取自 `message-circle-dots-2`） | Boxicons（经 Iconify 集合） | MIT；官网另称图标适用 CC BY 4.0 | <https://github.com/box-icons/boxicons> |
 | 图标（底栏中央凸起圆钮的笔，取自 `pen-new-round-broken`） | Solar by 480 Design（经 Iconify 集合） | **CC BY 4.0 —— 要求署名** | <https://github.com/480-Design/Solar-Icon-Set> |

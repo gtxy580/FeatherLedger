@@ -62,7 +62,8 @@
 
 <script>
 	import {
-		maskStyle
+		maskStyle,
+		ICONS
 	} from '@/services/icons.js'
 	import pressFx from '@/services/press.js'
 
@@ -167,7 +168,10 @@
 			p: false
 		},
 		{
-			t: '用在哪：本应用的绝大部分图标 —— 分类图标、账户图标与各处界面小图标（services/icons.js 的 73 枚里只有 2 枚不是它）。用法：把 SVG 的路径数据抄进源码，运行时用 CSS 遮罩着色，不引入任何依赖。',
+			// ★ 枚数**从 ICONS 现算**，不写死。原先写死成「73 枚」，加了收入图标那两批之后
+			//   实际已经是 105，而这类数字没有任何门拦得住（它只是文案里的一段字）。
+			//   反引号模板串在模块加载时求值一次，与 icons.js 永远同步。
+			t: `用在哪：本应用的绝大部分图标 —— 分类图标、账户图标与各处界面小图标（services/icons.js 的 ${Object.keys(ICONS).length} 枚里只有 2 枚不是它）。用法：把 SVG 的路径数据抄进源码，运行时用 CSS 遮罩着色，不引入任何依赖。`,
 			p: true
 		},
 		{

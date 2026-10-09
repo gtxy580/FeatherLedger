@@ -41,9 +41,11 @@
 ## 目录
 
 ```
-pages/          页面：首页 / 记一笔 / 分类 / 账户 / 主题 / 数据 / 我的 / 关于
+pages/          页面：首页 / 记一笔 / 分类明细 / 分类 / 账户 / 预付管理 / 预付历史 /
+                主题 / 数据 / 我的 / 关于
 components/     自绘组件：tabBar、分类图标、确认卡片、统计面板、图标飞行动画
 services/       逻辑层：account 账户、record 流水、category 分类、stats 统计、
+                prepay 预付、note 常用备注、lazy 列表懒加载切分、
                 backup 备份、theme + palette 主题色板、icons 图标注册表、
                 db 数据库、format 格式化、meta 杂项键值、press 按压反馈、tab-swipe 滑动
 static/         静态资源
@@ -53,6 +55,7 @@ main.js         入口 + 全局 mixin（主题变量、输入框的 cursor-spaci
 pages.json      路由与 tabBar
 manifest.json   应用配置
 uni.scss        全局 Less 变量
+LICENSE         许可（MIT）
 ```
 
 ## 架构约定
